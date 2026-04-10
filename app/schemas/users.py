@@ -7,14 +7,14 @@ class UserBase(BaseModel):
     email: EmailStr
 
 class UserCreate(UserBase):
-    role: str
+    role: int
     # no password, no company_id
     # password comes from the email flow
     # company_id comes from the admin's token
 
 class UserResponse(UserBase):
     id: UUID
-    role: str
+    role_id: int
     company_id: UUID
     created_at: datetime
 

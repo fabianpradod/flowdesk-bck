@@ -1,6 +1,16 @@
 from typing import Generator
+
 from sqlalchemy.orm import Session
+
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
+
+from app.models.users import User
+from app.utils.exceptions import AppError
 from app.core.database import SessionLocal
+from app.core.security import decode_access_token
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 def get_db() -> Generator:
     db = SessionLocal()
@@ -8,3 +18,21 @@ def get_db() -> Generator:
         yield db
     finally:
         db.close()
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    payload = decode_access_token(token)
+    if not payload:
+        raise AppError(status_code=401, message="Invalid or expired token")
+
+    user = db.query(User).filter(User.id == payload["sub"]).first()
+    if not user:
+        raise AppError(status_code=404, message="User not found")
+
+    return user
+
+def require_role(*roles: str):
+    def checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role != "admin" and current_user.role not in roles:
+            raise AppError(status_code=403, message="Insufficient permissions")
+        return current_user
+    return checker
