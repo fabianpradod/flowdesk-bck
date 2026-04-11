@@ -30,7 +30,7 @@ dash==3.2.0
 debugpy==1.8.15
 decorator==5.2.1
 defusedxml==0.7.1
-dotenv==0.9.9
+ecdsa==0.19.2
 et_xmlfile==2.0.0
 executing==2.2.0
 fastapi==0.119.1
@@ -61,7 +61,6 @@ jedi==0.19.2
 Jinja2==3.1.6
 jmespath==1.0.1
 joblib==1.5.1
-jose==1.0.0
 json5==0.12.0
 jsonpointer==3.0.0
 jsonschema==4.25.0
@@ -123,6 +122,7 @@ ptyprocess==0.7.0
 pure_eval==0.2.3
 puremagic==1.30
 pyarrow==21.0.0
+pyasn1==0.6.3
 pycparser==2.22
 pydantic==2.12.0
 pydantic_core==2.41.1
@@ -134,6 +134,7 @@ pyparsing==3.2.3
 pyreadr==0.5.4
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
+python-jose==3.5.0
 python-json-logger==3.3.0
 pytz==2025.2
 PyWavelets==1.9.0
@@ -146,6 +147,7 @@ rfc3339-validator==0.1.4
 rfc3986-validator==0.1.1
 rfc3987-syntax==1.1.0
 rpds-py==0.26.0
+rsa==4.9.1
 ruptures==1.1.10
 s3transfer==0.14.0
 scikit-learn==1.7.1

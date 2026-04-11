@@ -32,7 +32,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 def require_role(*roles: str):
     def checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role != "admin" and current_user.role not in roles:
-            raise AppError(status_code=403, message="Insufficient permissions")
-        return current_user
+        if not roles:
+            return current_user  # no roles specified = everyone in
+        if current_user.role.name == "admin" or current_user.role.name in roles:
+            return current_user
+        raise AppError(status_code=403, message="Insufficient permissions")
     return checker
