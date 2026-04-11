@@ -1,8 +1,9 @@
+import app.services.auth as auth_service
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import engine
-import app.services.auth as auth_service
 from app.api.dependencies.auth import get_db, require_role
 from app.schemas.companies import CompanyCreate, CompanyResponse
 from app.schemas.users import UserCreate, UserResponse, UserLogin, PasswordSet

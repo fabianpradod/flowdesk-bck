@@ -2,6 +2,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.users import User
+from app.models.roles import Role
 from app.models.companies import Company
 from app.schemas.users import UserCreate
 from app.utils.exceptions import AppError
@@ -34,11 +35,15 @@ def register_company(data: CompanyCreate, db: Session, engine) -> Company:
     db.add(company)
     db.flush()  # gets us company.id without committing yet
 
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if not admin_role:
+        raise AppError(status_code=500, message="Admin role not found")
+
     admin = User(
         username=data.admin_username,
         email=data.admin_email,
         password="",
-        role="admin",
+        role_id=admin_role.id,    # ← integer id, not string
         company_id=company.id,
     )
     db.add(admin)
@@ -65,7 +70,7 @@ def login(email: str, password: str, db: Session) -> dict:
 
     token = create_access_token({
         "sub": str(user.id),
-        "role": user.role,
+        "role": user.role.name,
         "company_id": str(user.company_id),
         "schema_name": company.schema_name,
     })
