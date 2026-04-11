@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import engine
 from app.api.dependencies.auth import get_db, require_role
 from app.schemas.companies import CompanyCreate, CompanyResponse
-from app.schemas.users import UserCreate, UserResponse, UserLogin, PasswordSet
+from app.schemas.users import UserCreate, UserResponse, UserLogin, PasswordSet, PasswordReset, EmailRequest
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -29,3 +29,19 @@ def create_employee(
     current_user = Depends(require_role("admin"))
 ):
     return auth_service.create_employee(data, current_user, db)
+
+@router.post("/resend-invitation")
+def resend_invitation(
+    data: EmailRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role("admin"))
+):
+    return auth_service.resend_invitation(data.email, db)
+
+@router.post("/forgot-password")
+def forgot_password(data: EmailRequest, db: Session = Depends(get_db)):
+    return auth_service.forgot_password(data.email, db)
+
+@router.post("/reset-password")
+def reset_password(data: PasswordReset, db: Session = Depends(get_db)):
+    return auth_service.reset_password(data.token, data.new_password, db)

@@ -14,10 +14,10 @@ class User(Base):
     username   = Column(String(50), nullable=False, unique=True)
     email      = Column(String(100), nullable=False, unique=True)
     password   = Column(String, nullable=False)
-    role_id = Column(Integer, ForeignKey("global.roles.id"), nullable=False)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("global.companies.id"), nullable=False)
+    role_id    = Column(Integer, ForeignKey("global.roles.id"), nullable=False)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("global.companies.id"), nullable=True)
     created_at = Column(DateTime, server_default=text("now()"))
-    is_active  = Column(Boolean, default=True, nullable=False)
+    is_active  = Column(Boolean, default=False, nullable=False)
 
     role    = relationship("Role", backref="users")
     company = relationship("Company", backref="users")

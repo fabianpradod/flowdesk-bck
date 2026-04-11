@@ -1,4 +1,5 @@
 from uuid import UUID
+from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr
 
@@ -8,6 +9,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     role_id: int
+    company_id: Optional[UUID] = None  # only required when superadmin calls
     # no password, no company_id
     # password comes from the email flow
     # company_id comes from the admin's token
@@ -28,3 +30,10 @@ class UserLogin(BaseModel):
 class PasswordSet(BaseModel):
     token: str        # from the email link
     new_password: str
+
+class PasswordReset(BaseModel):
+    token: str
+    new_password: str
+
+class EmailRequest(BaseModel):
+    email: EmailStr
