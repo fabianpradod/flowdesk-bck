@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, text, Boolean
 
 from app.core.database import Base
 
@@ -17,6 +17,7 @@ class User(Base):
     role_id = Column(Integer, ForeignKey("global.roles.id"), nullable=False)
     company_id = Column(UUID(as_uuid=True), ForeignKey("global.companies.id"), nullable=False)
     created_at = Column(DateTime, server_default=text("now()"))
+    is_active  = Column(Boolean, default=True, nullable=False)
 
     role    = relationship("Role", backref="users")
     company = relationship("Company", backref="users")
