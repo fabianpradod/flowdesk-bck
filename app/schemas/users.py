@@ -7,7 +7,7 @@ class UserBase(BaseModel):
     email: EmailStr
 
 class UserCreate(UserBase):
-    role: int
+    role_id: int
     # no password, no company_id
     # password comes from the email flow
     # company_id comes from the admin's token

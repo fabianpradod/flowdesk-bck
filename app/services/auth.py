@@ -86,7 +86,7 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
         username=data.username,
         email=data.email,
         password="",  # not set yet
-        role=data.role,
+        role_id=data.role_id,
         company_id=admin.company_id,  # taken from admin's token, not from request
     )
     db.add(employee)
