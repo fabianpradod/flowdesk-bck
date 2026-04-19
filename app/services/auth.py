@@ -1,4 +1,3 @@
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +9,7 @@ from app.utils.exceptions import AppError
 from app.schemas.companies import CompanyCreate
 from app.core.security import decode_access_token
 from app.core.security import hash_password, verify_password, create_access_token
+from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
 
 _reset_attempts: dict[str, list] = {}
 
@@ -22,13 +22,6 @@ def _send_password_reset_email(email: str, token: str):
     # TODO: replace with AWS SES when ready
     print(f"[EMAIL] Send to {email} → /auth/reset-password?token={token}")
 
-# ─── schema creation placeholder ──────────────────────────────────
-def _create_tenant_schema(schema_name: str, engine):
-    # TODO: expand this to also create tenant tables when ready
-    with engine.connect() as conn:
-        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
-        conn.commit()
-
 def _check_rate_limit(email: str):
     now = datetime.now(timezone.utc)
     attempts = _reset_attempts.get(email, [])
@@ -40,34 +33,41 @@ def _check_rate_limit(email: str):
     _reset_attempts[email] = attempts
 
 # ─── company registration ──────────────────────────────────────────
-def register_company(data: CompanyCreate, db: Session, engine) -> Company:
-    existing = db.query(Company).filter(Company.schema_name == data.schema_name).first()
-    if existing:
-        raise AppError(status_code=400, message="schema_name already taken")
+def register_company(data: CompanyCreate, db: Session) -> Company:
+    existing_email = db.query(User).filter(User.email == data.admin_email).first()
+    if existing_email:
+        raise AppError(status_code=400, message="Email already registered")
 
-    company = Company(
-        name=data.name,
-        schema_name=data.schema_name,
-    )
-    db.add(company)
-    db.flush()  # gets us company.id without committing yet
+    existing_username = db.query(User).filter(User.username == data.admin_username).first()
+    if existing_username:
+        raise AppError(status_code=400, message="Username already registered")
 
     admin_role = db.query(Role).filter(Role.name == "admin").first()
     if not admin_role:
         raise AppError(status_code=500, message="Admin role not found")
 
-    admin = User(
-        username=data.admin_username,
-        email=data.admin_email,
-        password="",
-        role_id=admin_role.id,    # ← integer id, not string
-        company_id=company.id,
-    )
-    db.add(admin)
-    db.commit()
-    db.refresh(company)
+    try:
+        company = Company(name=data.name, schema_name="")
+        db.add(company)
+        db.flush()  # gets us company.id before deriving the tenant schema
+        company.schema_name = generate_schema_name(company.id)
 
-    _create_tenant_schema(data.schema_name, engine)
+        admin = User(
+            username=data.admin_username,
+            email=data.admin_email,
+            password="",
+            role_id=admin_role.id,
+            company_id=company.id,
+        )
+        db.add(admin)
+
+        bootstrap_tenant_schema(db.connection(), company.schema_name)
+
+        db.commit()
+        db.refresh(company)
+    except Exception:
+        db.rollback()
+        raise
 
     token = create_access_token(
         {"sub": str(admin.id), "purpose": "set_password"},

@@ -1,0 +1,23 @@
+$kind: http-request
+name: Login
+method: POST
+url: '{{base_url}}/api/v1/auth/login'
+order: 2000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "admin@acme.com",
+      "password": "yourpassword"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Save token", function() {
+        var json = pm.response.json();
+        pm.environment.set("token", json.access_token);
+      });
