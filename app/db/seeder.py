@@ -61,3 +61,23 @@ def seed_permissions(db: Session):
 
     db.commit()
 
+def assign_permissions_to_roles(db: Session):
+    role_permissions_map = {
+        "superadmin": DEFAULT_PERMISSIONS,
+        "admin": ["view_inventory", "edit_inventory", "view_sales", "edit_sales", "create_movements", "view_movements", "create_users"],
+        "manager": ["view_inventory", "edit_inventory", "view_sales", "edit_sales", "create_movements", "view_movements"],
+        "employee": ["view_inventory", "view_sales", "view_movements"],
+    }
+
+    for role_name, perms in role_permissions_map.items():
+        role = db.query(Role).filter(Role.name == role_name).first()
+
+        if not role:
+            continue
+
+        permissions = db.query(Permission).filter(Permission.name.in_(perms)).all()
+        
+        if not role.permissions:
+            role.permissions = permissions
+    
+    db.commit()
