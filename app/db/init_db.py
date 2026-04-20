@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from app.models.roles import Role
 from app.models.users import User
-from app.db.seeder import seed_roles, seed_superadmin, seed_permissions
+from app.db.seeder import seed_roles, seed_superadmin, seed_permissions, assign_permissions_to_roles
 from app.models.companies import Company
 from app.core.database import engine, SessionLocal
 
@@ -18,6 +18,7 @@ def init_db():
         seed_roles(db)
         seed_superadmin(db)
         seed_permissions(db)
+        assign_permissions_to_roles(db)
 
     finally:
         db.close()
