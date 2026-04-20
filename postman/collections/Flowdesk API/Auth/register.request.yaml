@@ -1,0 +1,16 @@
+$kind: http-request
+name: Register Company
+method: POST
+url: '{{base_url}}/api/v1/auth/register'
+order: 1000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "name": "Acme Corp",
+      "admin_email": "admin@acme.com",
+      "admin_username": "admin"
+    }

@@ -1,0 +1,19 @@
+$kind: http-request
+name: Resend Invitation
+method: POST
+url: '{{base_url}}/api/v1/auth/resend-invitation'
+order: 5000
+headers:
+  - key: Content-Type
+    value: application/json
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{token}}'
+body:
+  type: json
+  content: |-
+    {
+      "email": "john@acme.com"
+    }

@@ -3,7 +3,6 @@ import app.services.auth as auth_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.database import engine
 from app.api.dependencies.auth import get_db, require_role
 from app.schemas.companies import CompanyCreate, CompanyResponse
 from app.schemas.users import UserCreate, UserResponse, UserLogin, PasswordSet, PasswordReset, EmailRequest
@@ -12,7 +11,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 @router.post("/register", response_model=CompanyResponse)
 def register(data: CompanyCreate, db: Session = Depends(get_db)):
-    return auth_service.register_company(data, db, engine)
+    return auth_service.register_company(data, db)
 
 @router.post("/login")
 def login(data: UserLogin, db: Session = Depends(get_db)):
