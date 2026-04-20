@@ -1,0 +1,21 @@
+$kind: http-request
+name: Create Employee
+method: POST
+url: '{{base_url}}/api/v1/auth/employees'
+order: 4000
+headers:
+  - key: Content-Type
+    value: application/json
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{token}}'
+body:
+  type: json
+  content: |-
+    {
+      "username": "john_doe",
+      "email": "john@acme.com",
+      "role_id": 2
+    }

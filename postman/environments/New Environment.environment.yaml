@@ -1,0 +1,15 @@
+name: test
+values:
+  - key: base_url
+    enabled: true
+    value: ''
+  - key: token
+    enabled: true
+    value: ''
+  - key: admin_email
+    enabled: true
+    value: ''
+  - key: admin_password
+    enabled: true
+    value: ''
+color: 0
