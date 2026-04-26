@@ -21,9 +21,3 @@ class User(Base):
 
     role    = relationship("Role", backref="users")
     company = relationship("Company", backref="users")
-
-permissions = relationship(
-    "Permission",
-    secondary = user_permissions, 
-    backref = "users"
-)
