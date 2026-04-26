@@ -37,6 +37,3 @@ class PasswordReset(BaseModel):
 
 class EmailRequest(BaseModel):
     email: EmailStr
-
-class AssignPermissions(BaseModel):
-    permissions: List[str]

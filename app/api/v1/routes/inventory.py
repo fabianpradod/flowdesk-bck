@@ -16,7 +16,6 @@ from app.schemas.inventory import (
     SupplierResponse,
 )
 
-
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
 
