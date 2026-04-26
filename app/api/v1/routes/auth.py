@@ -3,6 +3,7 @@ import app.services.auth as auth_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.models.users import User
 from app.api.dependencies.auth import get_db, require_role
 from app.schemas.companies import CompanyCreate, CompanyResponse
 from app.schemas.users import UserCreate, UserResponse, UserLogin, PasswordSet, PasswordReset, EmailRequest
@@ -25,7 +26,7 @@ def set_password(data: PasswordSet, db: Session = Depends(get_db)):
 def create_employee(
     data: UserCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(require_role("admin"))
+    current_user: User = Depends(require_role("admin"))
 ):
     return auth_service.create_employee(data, current_user, db)
 
@@ -33,9 +34,9 @@ def create_employee(
 def resend_invitation(
     data: EmailRequest,
     db: Session = Depends(get_db),
-    current_user = Depends(require_role("admin"))
+    current_user: User = Depends(require_role("admin"))
 ):
-    return auth_service.resend_invitation(data.email, db)
+    return auth_service.resend_invitation(data.email, current_user, db)
 
 @router.post("/forgot-password")
 def forgot_password(data: EmailRequest, db: Session = Depends(get_db)):

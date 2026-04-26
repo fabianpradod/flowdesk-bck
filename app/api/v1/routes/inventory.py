@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 @router.get("/suppliers", response_model=list[SupplierResponse])
 def list_suppliers(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_suppliers(current_user, db)
 
@@ -39,7 +39,7 @@ def create_supplier(
 @router.get("/products", response_model=list[ProductResponse])
 def list_products(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_products(current_user, db)
 
@@ -57,7 +57,7 @@ def create_product(
 def list_movements(
     product_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_inventory_movements(current_user, db, product_id)
 
@@ -75,6 +75,6 @@ def create_movement(
 def list_alerts(
     open_only: bool = Query(default=True),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_inventory_alerts(current_user, db, open_only=open_only)
