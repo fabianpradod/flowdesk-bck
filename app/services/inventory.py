@@ -76,6 +76,8 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
     products = tables["producto"]
     suppliers = tables["proveedor"]
 
+    sku = data.sku.strip().lower()
+
     if data.proveedor_id:
         supplier = db.execute(
             select(suppliers.c.id, suppliers.c.is_active).where(suppliers.c.id == data.proveedor_id)
@@ -86,7 +88,7 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
             raise AppError(status_code=400, message="Supplier is inactive")
 
     existing = db.execute(
-        select(products.c.id).where(products.c.sku == data.sku.strip())
+        select(products.c.id).where(products.c.sku == sku)
     ).first()
     if existing:
         raise AppError(status_code=400, message="SKU already exists")
@@ -97,7 +99,7 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
         insert(products).values(
             id=product_id,
             proveedor_id=data.proveedor_id,
-            sku=data.sku.strip(),
+            sku=sku,
             nombre=data.nombre.strip(),
             descripcion=data.descripcion,
             precio_venta=data.precio_venta,
@@ -127,10 +129,10 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]
     movements = tables["movimiento_inventario"]
-    alerts = tables["alerta"]
+    alerts = tables["alerta"] 
 
     product = db.execute(
-        select(products).where(products.c.id == data.producto_id)
+        select(products).where(products.c.id == data.producto_id).with_for_update()
     ).mappings().first()
     if product is None:
         raise AppError(status_code=404, message="Product not found")
@@ -140,11 +142,15 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     direction = _movement_direction(data.tipo_movimiento)
     stock_anterior = _to_decimal(product["stock_actual"])
     cantidad = _to_decimal(data.cantidad)
+
+    if cantidad <= 0:
+        raise AppError(status_code=400, message="Quantity must be greater than zero")
+
     delta = cantidad if direction == "in" else -cantidad
     stock_resultante = stock_anterior + delta
     if stock_resultante < Decimal("0"):
         raise AppError(status_code=400, message="Insufficient stock for this movement")
-
+    
     now = _utcnow()
     movement_id = uuid4()
 
@@ -179,9 +185,9 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
             now=now,
         )
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
-        raise
+        raise AppError(500, f"Inventory movement failed: {str(e)}")
 
     row = db.execute(
         select(movements).where(movements.c.id == movement_id)
