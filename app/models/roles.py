@@ -1,8 +1,6 @@
 import uuid
 
 from sqlalchemy import Column, String, Integer, DateTime, text
-from sqlalchemy.orm import relationship
-
 from app.core.database import Base
 
 class Role(Base):
