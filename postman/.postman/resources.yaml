@@ -1,0 +1,8 @@
+# Use this workspace to collaborate
+workspace:
+  id: f1fc275b-93a8-4af1-994d-979759c1324a
+
+localResources:
+  environments:
+    - ..\environments\Flowdesk Local.environment.yaml
+    - ..\environments\New Environment.environment.yaml
