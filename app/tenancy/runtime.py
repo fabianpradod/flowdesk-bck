@@ -2,8 +2,8 @@ from functools import lru_cache
 
 from sqlalchemy import Table
 
+from app.models.tenant.registry import build_tenant_metadata
 from app.models.users import User
-from app.tenancy.bootstrap import build_tenant_metadata
 from app.utils.exceptions import AppError
 
 

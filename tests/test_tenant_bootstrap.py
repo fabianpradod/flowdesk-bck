@@ -1,4 +1,3 @@
-import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -65,30 +64,77 @@ class TenantBootstrapTests(unittest.TestCase):
         self.assertRegex(schema_name, r"^tenant_[a-f0-9]{32}$")
 
     def test_build_tenant_metadata_contains_expected_tables(self):
-        from app.tenancy.bootstrap import build_tenant_metadata
+        from app.models.tenant.base import Base, TENANT_SCHEMA
+        from app.models.tenant.commercial import Cliente, DetalleVenta, Venta
+        from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor
+        from app.models.tenant.operations import Reporte, Tarea
+        from app.models.tenant.registry import build_tenant_metadata, get_tenant_table_names
 
         schema_name = "tenant_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         metadata = build_tenant_metadata(schema_name)
+        expected_table_names = {
+            "proveedor",
+            "producto",
+            "movimiento_inventario",
+            "alerta",
+            "cliente",
+            "venta",
+            "detalle_venta",
+            "tarea",
+            "reporte",
+        }
+        tenant_models = {
+            Proveedor,
+            Producto,
+            MovimientoInventario,
+            Alerta,
+            Cliente,
+            Venta,
+            DetalleVenta,
+            Tarea,
+            Reporte,
+        }
 
+        table_names = get_tenant_table_names()
+        self.assertEqual(set(table_names), expected_table_names)
+        self.assertEqual(len(table_names), len(expected_table_names))
+        for model in tenant_models:
+            self.assertTrue(issubclass(model, Base))
+            self.assertIn(model.__tablename__, expected_table_names)
+            self.assertEqual(model.__table__.schema, TENANT_SCHEMA)
         self.assertEqual(
             set(metadata.tables.keys()),
-            {
-                f"{schema_name}.proveedor",
-                f"{schema_name}.producto",
-                f"{schema_name}.cliente",
-                f"{schema_name}.venta",
-                f"{schema_name}.detalle_venta",
-                f"{schema_name}.tarea",
-                f"{schema_name}.reporte",
-                f"{schema_name}.movimiento_inventario",
-                f"{schema_name}.alerta",
-            },
+            {f"{schema_name}.{table_name}" for table_name in expected_table_names}
+            | {"global.users"},
         )
 
         movement_table = metadata.tables[f"{schema_name}.movimiento_inventario"]
         fk_targets = {fk.target_fullname for fk in movement_table.foreign_keys}
         self.assertIn(f"{schema_name}.producto.id", fk_targets)
         self.assertIn("global.users.id", fk_targets)
+        self.assertNotIn(f"{schema_name}.usuario", metadata.tables)
+        self.assertNotIn(f"{schema_name}.rol", metadata.tables)
+        self.assertNotIn(f"{schema_name}.warehouse", metadata.tables)
+        self.assertNotIn(f"{schema_name}.warehouses", metadata.tables)
+
+        sale_table = metadata.tables[f"{schema_name}.venta"]
+        task_table = metadata.tables[f"{schema_name}.tarea"]
+        report_table = metadata.tables[f"{schema_name}.reporte"]
+        self.assertIn("global.users.id", {fk.target_fullname for fk in sale_table.foreign_keys})
+        self.assertIn("global.users.id", {fk.target_fullname for fk in task_table.foreign_keys})
+        self.assertIn("global.users.id", {fk.target_fullname for fk in report_table.foreign_keys})
+
+    def test_tenant_table_creation_order_preserves_foreign_keys(self):
+        from app.models.tenant.registry import get_tenant_table_names
+
+        table_names = get_tenant_table_names()
+
+        self.assertLess(table_names.index("proveedor"), table_names.index("producto"))
+        self.assertLess(table_names.index("cliente"), table_names.index("venta"))
+        self.assertLess(table_names.index("venta"), table_names.index("detalle_venta"))
+        self.assertLess(table_names.index("producto"), table_names.index("detalle_venta"))
+        self.assertLess(table_names.index("producto"), table_names.index("movimiento_inventario"))
+        self.assertLess(table_names.index("producto"), table_names.index("alerta"))
 
     def test_register_company_derives_schema_and_bootstraps_before_commit(self):
         from app.models.companies import Company
