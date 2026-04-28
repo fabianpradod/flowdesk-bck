@@ -282,3 +282,36 @@ def _to_decimal(value) -> Decimal:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+def update_product_status(current_user: User, db: Session, product_id, is_active: bool) -> dict:
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+
+    product = db.execute(
+        select(products).where(products.c.id == product_id)
+    ).mappings().first()
+
+    if product is None:
+        raise AppError(status_code=404, message="Product not found")
+
+    if product["is_active"] == is_active:
+        raise AppError(status_code=400, message="Product already has this status")
+
+    now = _utcnow()
+
+    try:
+        db.execute(
+            update(products)
+            .where(products.c.id == product_id)
+            .values(is_active=is_active, updated_at=now)
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Failed to update product status: {str(e)}")
+
+    updated = db.execute(
+        select(products).where(products.c.id == product_id)
+    ).mappings().one()
+
+    return dict(updated)
