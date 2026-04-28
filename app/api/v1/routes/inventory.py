@@ -1,4 +1,5 @@
 import app.services.inventory as inventory_service
+from app.schemas.inventory import ProductStatusUpdate
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -52,6 +53,19 @@ def create_product(
 ):
     return inventory_service.create_product(data, current_user, db)
 
+@router.patch("/products/{product_id}/status", response_model=ProductResponse)
+def change_product_status(
+    product_id: UUID,
+    data: ProductStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    return inventory_service.update_product_status(
+        current_user,
+        db,
+        product_id,
+        data.is_active
+    )
 
 @router.get("/movements", response_model=list[InventoryMovementResponse])
 def list_movements(
