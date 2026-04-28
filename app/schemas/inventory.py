@@ -64,6 +64,8 @@ class ProductResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class ProductStatusUpdate(BaseModel):
+    is_active: bool
 
 class InventoryMovementCreate(BaseModel):
     producto_id: UUID
