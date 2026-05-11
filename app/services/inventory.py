@@ -13,7 +13,10 @@ from app.schemas.inventory import (
 )
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
-
+from fastapi import UploadFile
+from openpyxl import load_workbook
+from app.utils.excel import load_excel_rows
+from app.utils.logger import logger
 
 INBOUND_MOVEMENTS = {
     "entrada_compra",
@@ -315,3 +318,63 @@ def update_product_status(current_user: User, db: Session, product_id, is_active
     ).mappings().one()
 
     return dict(updated)
+
+def import_products_from_excel(current_user: User, db: Session, file: UploadFile,) -> dict:
+    if not file.filename.endswith(".xlsx"):
+        raise AppError(400, "Only .xlsx files are supported")
+    
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+    suppliers = tables["proveedor"]
+    rows = load_excel_rows(file.file)
+    inserted = 0
+    errors = []
+
+    for index, row in enumerate(rows, start = 2):
+        try:
+            (sku, nombre, stock_actual, stock_minimo, precio_estandar, proveedor, descripcion, estado,) = row
+
+            if not sku or not nombre:
+                raise ValueError("SKU and Nombre are required")
+            
+            existing = db.execute(select(products.c.sku == str(sku).strip().lower())).first()
+
+            if existing:
+                raise ValueError("SKU already exists")
+            
+            proveedor_id = None
+
+            if proveedor:
+                supplier = db.execute(select(suppliers).where(suppliers.c.nombre == proveedor)).mappings().first()
+
+                if supplier is None:
+                    raise ValueError(f"Supplier '{proveedor}' not found")
+                
+                if not supplier["is_active"]:
+                    raise ValueError(f"Supplier '{proveedor}' is inactive")
+                
+                proveedor_id = supplier["id"]
+
+            now = _utcnow()
+
+            db.execute(insert(products).values(id = uuid4(), proveedor_id = proveedor_id, sku = str(sku).strip().lower(), nombre = str(nombre).strip(), descripcion = descripcion, precio_venta = Decimal(str(precio_estandar or 0)), stock_actual = Decimal(str(stock_actual or 0)), stock_minimo = Decimal(str(stock_minimo or 0)), unidad_medida = "unidad", is_active = str(estado).lower() == "activo", updated_at = now))
+
+            inserted += 1
+
+        except Exception as e:
+            errors.append({"row": index, "error": str(e)})
+
+    try:
+        db.commit()
+    
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Import failed: {str(e)}")
+
+    logger.info(f"Imported {inserted} products with {len(errors)} errors")
+
+    return {
+        "total_rows": len(rows),
+        "inserted": inserted,
+        "errors": errors,
+    }
