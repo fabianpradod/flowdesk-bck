@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal
+from uuid import UUID
 from uuid import uuid4
 
 from sqlalchemy import insert, select, update
@@ -7,7 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.models.users import User
 from app.schemas.inventory import (
+    AnalyticsPeriod,
+    AnalyticsWindow,
     InventoryMovementCreate,
+    ProductAnalyticsSort,
     ProductCreate,
     SupplierCreate,
 )
@@ -29,6 +33,13 @@ OUTBOUND_MOVEMENTS = {
 }
 OPEN_ALERT_STATUS = "pendiente"
 LOW_STOCK_ALERT_TYPES = {"stock_bajo", "sin_stock"}
+PERIOD_DAYS = {
+    "7d": 7,
+    "30d": 30,
+    "90d": 90,
+    "6m": 183,
+    "12m": 366,
+}
 
 
 def list_suppliers(current_user: User, db: Session) -> list[dict]:
@@ -199,9 +210,264 @@ def list_inventory_alerts(current_user: User, db: Session, open_only: bool = Tru
     return [dict(row) for row in rows]
 
 
+def get_monthly_behavior(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    product_id: UUID | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id)
+    points = _aggregate_movement_rows(rows, window="month", include_previous=True)
+    return {
+        "period": period,
+        "product_id": product_id,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        "points": points,
+    }
+
+
+def get_inventory_trend(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    window: AnalyticsWindow,
+    product_id: UUID | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id)
+    points = _aggregate_movement_rows(rows, window=window, include_previous=False)
+    return {
+        "period": period,
+        "window": window,
+        "product_id": product_id,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        "points": points,
+    }
+
+
+def get_product_analytics(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    sort_by: ProductAnalyticsSort,
+    limit: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id=None)
+    products = _rank_product_rows(rows, sort_by=sort_by, limit=limit)
+    return {
+        "period": period,
+        "sort_by": sort_by,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        "products": products,
+    }
+
+
 def _get_tenant_tables_for_user(current_user: User) -> dict:
     schema_name = get_user_schema_name(current_user)
     return get_tenant_tables(schema_name)
+
+
+def _fetch_analytics_rows(
+    current_user: User,
+    db: Session,
+    analytics_range: dict,
+    product_id: UUID | None,
+) -> list[dict]:
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+    movements = tables["movimiento_inventario"]
+    query = (
+        select(
+            movements.c.producto_id,
+            movements.c.tipo_movimiento,
+            movements.c.fecha,
+            movements.c.cantidad,
+            movements.c.stock_resultante,
+            products.c.sku,
+            products.c.nombre,
+            products.c.stock_actual,
+            products.c.stock_minimo,
+        )
+        .select_from(movements.join(products, movements.c.producto_id == products.c.id))
+        .where(movements.c.fecha >= analytics_range["start"])
+        .where(movements.c.fecha <= analytics_range["end"])
+        .order_by(movements.c.fecha.asc())
+    )
+    if product_id is not None:
+        query = query.where(movements.c.producto_id == product_id)
+    return [dict(row) for row in db.execute(query).mappings()]
+
+
+def _resolve_analytics_range(
+    period: AnalyticsPeriod,
+    start_date: date | None,
+    end_date: date | None,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    current = now or _utcnow()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    resolved_end = _date_to_datetime(end_date, end_of_day=True) if end_date else current
+
+    if period == "custom":
+        if start_date is None or end_date is None:
+            raise AppError(status_code=400, message="Custom analytics period requires start_date and end_date")
+        resolved_start = _date_to_datetime(start_date)
+    elif period == "ytd":
+        resolved_start = datetime(resolved_end.year, 1, 1, tzinfo=timezone.utc)
+    else:
+        resolved_start = resolved_end - timedelta(days=PERIOD_DAYS[period])
+
+    if resolved_start > resolved_end:
+        raise AppError(status_code=400, message="start_date must be before end_date")
+    return {"start": resolved_start, "end": resolved_end}
+
+
+def _aggregate_movement_rows(
+    rows: list[dict],
+    *,
+    window: AnalyticsWindow,
+    include_previous: bool,
+) -> list[dict]:
+    buckets = {}
+    for row in rows:
+        bucket_start = _bucket_start(row["fecha"], window)
+        bucket = buckets.setdefault(bucket_start, _empty_bucket(bucket_start, window))
+        quantity = _to_decimal(row["cantidad"])
+        if _movement_direction(row["tipo_movimiento"]) == "in":
+            bucket["inbound_quantity"] += quantity
+        else:
+            bucket["outbound_quantity"] += quantity
+        bucket["net_quantity"] = bucket["inbound_quantity"] - bucket["outbound_quantity"]
+        bucket["movement_count"] += 1
+        bucket["ending_stock"] = _to_decimal(row["stock_resultante"])
+
+    points = [buckets[key] for key in sorted(buckets)]
+    if include_previous:
+        previous = None
+        for point in points:
+            current_net = point["net_quantity"]
+            point["previous_net_quantity"] = previous
+            point["net_change_quantity"] = None if previous is None else current_net - previous
+            if previous in (None, Decimal("0")):
+                point["net_change_percent"] = None
+            else:
+                point["net_change_percent"] = ((current_net - previous) / abs(previous) * Decimal("100")).quantize(
+                    Decimal("0.01")
+                )
+            previous = current_net
+    return points
+
+
+def _rank_product_rows(
+    rows: list[dict],
+    *,
+    sort_by: ProductAnalyticsSort,
+    limit: int,
+) -> list[dict]:
+    products = {}
+    for row in rows:
+        product_id = row["producto_id"]
+        product = products.setdefault(
+            product_id,
+            {
+                "product_id": product_id,
+                "sku": row["sku"],
+                "nombre": row["nombre"],
+                "inbound_quantity": Decimal("0"),
+                "outbound_quantity": Decimal("0"),
+                "net_quantity": Decimal("0"),
+                "movement_count": 0,
+                "ending_stock": _to_decimal(row["stock_actual"]),
+                "stock_minimo": _to_decimal(row["stock_minimo"]),
+                "stock_risk_score": Decimal("0"),
+            },
+        )
+        quantity = _to_decimal(row["cantidad"])
+        if _movement_direction(row["tipo_movimiento"]) == "in":
+            product["inbound_quantity"] += quantity
+        else:
+            product["outbound_quantity"] += quantity
+        product["net_quantity"] = product["inbound_quantity"] - product["outbound_quantity"]
+        product["movement_count"] += 1
+        product["ending_stock"] = _to_decimal(row["stock_resultante"])
+        product["stock_risk_score"] = _stock_risk_score(
+            product["ending_stock"],
+            product["stock_minimo"],
+            product["outbound_quantity"],
+        )
+
+    return sorted(products.values(), key=lambda product: _product_sort_key(product, sort_by), reverse=True)[:limit]
+
+
+def _product_sort_key(product: dict, sort_by: ProductAnalyticsSort):
+    if sort_by == "outbound":
+        return (product["outbound_quantity"], product["movement_count"])
+    if sort_by == "inbound":
+        return (product["inbound_quantity"], product["movement_count"])
+    if sort_by == "net":
+        return (abs(product["net_quantity"]), product["movement_count"])
+    if sort_by == "movement_count":
+        return (product["movement_count"], product["outbound_quantity"])
+    return (product["stock_risk_score"], product["outbound_quantity"])
+
+
+def _stock_risk_score(ending_stock: Decimal, stock_minimo: Decimal, outbound_quantity: Decimal) -> Decimal:
+    if stock_minimo <= Decimal("0"):
+        return Decimal("0")
+    shortage_ratio = max(Decimal("0"), (stock_minimo - ending_stock) / stock_minimo)
+    demand_weight = outbound_quantity / (outbound_quantity + stock_minimo) if outbound_quantity > 0 else Decimal("0")
+    return ((shortage_ratio * Decimal("70")) + (demand_weight * Decimal("30"))).quantize(Decimal("0.01"))
+
+
+def _empty_bucket(bucket_start: date, window: AnalyticsWindow) -> dict:
+    return {
+        "period_start": bucket_start,
+        "period_label": _bucket_label(bucket_start, window),
+        "inbound_quantity": Decimal("0"),
+        "outbound_quantity": Decimal("0"),
+        "net_quantity": Decimal("0"),
+        "movement_count": 0,
+        "ending_stock": None,
+    }
+
+
+def _bucket_start(value: datetime, window: AnalyticsWindow) -> date:
+    value_date = value.date()
+    if window == "day":
+        return value_date
+    if window == "week":
+        return value_date - timedelta(days=value_date.weekday())
+    return date(value_date.year, value_date.month, 1)
+
+
+def _bucket_label(bucket_start: date, window: AnalyticsWindow) -> str:
+    if window == "month":
+        return bucket_start.strftime("%Y-%m")
+    if window == "week":
+        return f"{bucket_start.isoformat()} week"
+    return bucket_start.isoformat()
+
+
+def _date_to_datetime(value: date, *, end_of_day: bool = False) -> datetime:
+    if end_of_day:
+        return datetime.combine(value, time.max, tzinfo=timezone.utc)
+    return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
 def _movement_direction(movement_type: str) -> str:

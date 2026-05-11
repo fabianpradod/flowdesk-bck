@@ -1,5 +1,6 @@
 import app.services.inventory as inventory_service
 
+from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -7,9 +8,15 @@ from uuid import UUID
 from app.api.dependencies.auth import get_current_user, get_db, require_role
 from app.models.users import User
 from app.schemas.inventory import (
+    AnalyticsPeriod,
+    AnalyticsWindow,
     InventoryAlertResponse,
+    InventoryMonthlyAnalyticsResponse,
     InventoryMovementCreate,
     InventoryMovementResponse,
+    InventoryTrendAnalyticsResponse,
+    ProductAnalyticsResponse,
+    ProductAnalyticsSort,
     ProductCreate,
     ProductResponse,
     SupplierCreate,
@@ -79,3 +86,64 @@ def list_alerts(
     current_user: User = Depends(get_current_user),
 ):
     return inventory_service.list_inventory_alerts(current_user, db, open_only=open_only)
+
+
+@router.get("/analytics/monthly", response_model=InventoryMonthlyAnalyticsResponse)
+def get_monthly_behavior(
+    period: AnalyticsPeriod = Query(default="6m"),
+    product_id: UUID | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return inventory_service.get_monthly_behavior(
+        current_user,
+        db,
+        period=period,
+        product_id=product_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+@router.get("/analytics/trend", response_model=InventoryTrendAnalyticsResponse)
+def get_inventory_trend(
+    period: AnalyticsPeriod = Query(default="30d"),
+    window: AnalyticsWindow = Query(default="day"),
+    product_id: UUID | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return inventory_service.get_inventory_trend(
+        current_user,
+        db,
+        period=period,
+        window=window,
+        product_id=product_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+@router.get("/analytics/products", response_model=ProductAnalyticsResponse)
+def get_product_analytics(
+    period: AnalyticsPeriod = Query(default="30d"),
+    sort_by: ProductAnalyticsSort = Query(default="outbound"),
+    limit: int = Query(default=10, ge=1, le=50),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return inventory_service.get_product_analytics(
+        current_user,
+        db,
+        period=period,
+        sort_by=sort_by,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date,
+    )

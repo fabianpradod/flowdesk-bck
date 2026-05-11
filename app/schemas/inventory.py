@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -15,6 +15,15 @@ MovementType = Literal[
     "salida_manual",
     "ajuste_negativo",
     "devolucion_proveedor",
+]
+AnalyticsPeriod = Literal["7d", "30d", "90d", "6m", "12m", "ytd", "custom"]
+AnalyticsWindow = Literal["day", "week", "month"]
+ProductAnalyticsSort = Literal[
+    "outbound",
+    "inbound",
+    "net",
+    "movement_count",
+    "stock_risk",
 ]
 
 
@@ -100,3 +109,57 @@ class InventoryAlertResponse(BaseModel):
     resuelta_en: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class InventoryAnalyticsPoint(BaseModel):
+    period_start: date
+    period_label: str
+    inbound_quantity: Decimal
+    outbound_quantity: Decimal
+    net_quantity: Decimal
+    movement_count: int
+    ending_stock: Decimal | None = None
+
+
+class InventoryMonthlyComparisonPoint(InventoryAnalyticsPoint):
+    previous_net_quantity: Decimal | None = None
+    net_change_quantity: Decimal | None = None
+    net_change_percent: Decimal | None = None
+
+
+class InventoryMonthlyAnalyticsResponse(BaseModel):
+    period: AnalyticsPeriod
+    product_id: UUID | None
+    start_date: date
+    end_date: date
+    points: list[InventoryMonthlyComparisonPoint]
+
+
+class InventoryTrendAnalyticsResponse(BaseModel):
+    period: AnalyticsPeriod
+    window: AnalyticsWindow
+    product_id: UUID | None
+    start_date: date
+    end_date: date
+    points: list[InventoryAnalyticsPoint]
+
+
+class ProductAnalyticsRow(BaseModel):
+    product_id: UUID
+    sku: str
+    nombre: str
+    inbound_quantity: Decimal
+    outbound_quantity: Decimal
+    net_quantity: Decimal
+    movement_count: int
+    ending_stock: Decimal
+    stock_minimo: Decimal
+    stock_risk_score: Decimal
+
+
+class ProductAnalyticsResponse(BaseModel):
+    period: AnalyticsPeriod
+    sort_by: ProductAnalyticsSort
+    start_date: date
+    end_date: date
+    products: list[ProductAnalyticsRow]
