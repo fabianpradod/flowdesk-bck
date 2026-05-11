@@ -17,6 +17,7 @@ from fastapi import UploadFile
 from openpyxl import load_workbook
 from app.utils.excel import load_excel_rows
 from app.utils.logger import logger
+from app.core.config import MAX_IMPORT_FILE_SIZE
 
 INBOUND_MOVEMENTS = {
     "entrada_compra",
@@ -322,6 +323,13 @@ def update_product_status(current_user: User, db: Session, product_id, is_active
 def import_products_from_excel(current_user: User, db: Session, file: UploadFile,) -> dict:
     if not file.filename.endswith(".xlsx"):
         raise AppError(400, "Only .xlsx files are supported")
+    
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    if file_size > MAX_IMPORT_FILE_SIZE:
+        raise AppError(400, "File size exceeds the limit")
     
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]

@@ -16,6 +16,8 @@ from app.schemas.inventory import (
     SupplierCreate,
     SupplierResponse,
 )
+from fastapi import UploadFile, File
+from app.schemas.inventory import ProductImportResponse
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
@@ -92,3 +94,7 @@ def list_alerts(
     current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_inventory_alerts(current_user, db, open_only=open_only)
+
+@router.post("/products/import", response_model = ProductImportResponse,)
+def import_products(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
+    return inventory_service.import_products_from_excel(file, current_user, db)
