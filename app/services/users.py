@@ -11,22 +11,30 @@ def get_users(db: Session, current_user) -> list[User]:
         return db.query(User).join(Role).all()
     return db.query(User).join(Role).filter(User.company_id == current_user.company_id).all()
 
+
 def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(404, "User not found")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
         raise AppError(403, "Not authorized")
+    if user.role.name == "superadmin":
+        raise AppError(403, "Cannot modify a superadmin user")
+
     if data.username is not None:
         user.username = data.username
     if data.role_id is not None:
         role = db.query(Role).filter(Role.id == data.role_id).first()
         if not role:
             raise AppError(404, "Role not found")
+        if role.name == "superadmin":
+            raise AppError(403, "Cannot assign superadmin role")
         user.role_id = data.role_id
+
     db.commit()
     db.refresh(user)
     return user
+
 
 def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, current_user) -> User:
     user = db.query(User).filter(User.id == user_id).first()
@@ -34,16 +42,25 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
         raise AppError(404, "User not found")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
         raise AppError(403, "Not authorized")
+    if user.role.name == "superadmin":
+        raise AppError(403, "Cannot modify a superadmin user")
+
     user.is_active = data.is_active
     db.commit()
     db.refresh(user)
     return user
 
+
 def delete_user(db: Session, user_id: UUID, current_user) -> None:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(404, "User not found")
+    if user.id == current_user.id:
+        raise AppError(400, "Cannot delete your own account")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
         raise AppError(403, "Not authorized")
+    if user.role.name == "superadmin":
+        raise AppError(403, "Cannot delete a superadmin user")
+
     user.is_active = False
     db.commit()
