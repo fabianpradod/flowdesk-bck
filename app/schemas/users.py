@@ -1,7 +1,7 @@
 from uuid import UUID
-from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from typing import Optional, List
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, model_validator
 
 class UserBase(BaseModel):
     username: str
@@ -14,14 +14,23 @@ class UserCreate(UserBase):
     # password comes from the email flow
     # company_id comes from the admin's token
 
+
 class UserResponse(UserBase):
     id: UUID
     role_id: int
-    company_id: UUID
+    role_name: str = ""
+    company_id: Optional[UUID] = None
+    is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_role_name(cls, v):
+        if hasattr(v, "role") and v.role:
+            v.__dict__["role_name"] = v.role.name
+        return v
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -37,3 +46,10 @@ class PasswordReset(BaseModel):
 
 class EmailRequest(BaseModel):
     email: EmailStr
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    role_id: Optional[int] = None
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
