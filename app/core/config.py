@@ -21,3 +21,8 @@ SUPERADMIN_USERNAME: str = os.getenv("SUPERADMIN_USERNAME")
 
 # File upload
 MAX_IMPORT_FILE_SIZE = 5 * 1024 * 1024
+
+# Email
+FRONTEND_URL: str = os.getenv("FRONTEND_URL")
+SMTP_USERNAME: str = os.getenv("SMTP_USERNAME")
+SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD")
