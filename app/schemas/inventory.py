@@ -178,3 +178,32 @@ class ProductAnalyticsResponse(BaseModel):
     start_date: date
     end_date: date
     products: list[ProductAnalyticsRow]
+
+
+class ProductImportResponse(BaseModel):
+    inserted: int
+    products: list[ProductResponse]
+
+
+class InventoryMetricsResponse(BaseModel):
+    period: AnalyticsPeriod
+    product_id: UUID | None
+    start_date: date
+    end_date: date
+    entradas: Decimal
+    salidas: Decimal
+    stock_bajo: int
+    sin_stock: int
+
+
+class InventoryHistoryRow(BaseModel):
+    id: UUID
+    producto_id: UUID
+    sku: str
+    nombre: str
+    tipo_movimiento: str
+    direction: Literal["in", "out"]
+    fecha: datetime
+    cantidad: Decimal
+    stock_resultante: Decimal
+    motivo: str | None

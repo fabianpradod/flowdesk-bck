@@ -36,7 +36,8 @@ def require_role(*roles: str):
     def checker(current_user: User = Depends(get_current_user)) -> User:
         if not roles:
             return current_user  # no roles specified = everyone in
-        if current_user.role.name in ELEVATED_ROLES or current_user.role.name in roles:
+        role_name = getattr(getattr(current_user, "role", None), "name", None)
+        if role_name in ELEVATED_ROLES or role_name in roles:
             return current_user
         raise AppError(status_code=403, message="Insufficient permissions")
     return checker

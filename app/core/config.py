@@ -26,3 +26,6 @@ MAX_IMPORT_FILE_SIZE = 5 * 1024 * 1024
 FRONTEND_URL: str = os.getenv("FRONTEND_URL")
 SMTP_USERNAME: str = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD")
+
+DEMO_SEED_ENABLED: bool = os.getenv("DEMO_SEED_ENABLED", "false").lower() in {"1", "true", "yes"}
+DEMO_USER_PASSWORD: str = os.getenv("DEMO_USER_PASSWORD", "Demo12345!")

@@ -1,7 +1,12 @@
+import csv
+import re
+import zipfile
 from datetime import date, datetime, time, timezone, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from io import BytesIO, StringIO
 from uuid import UUID
 from uuid import uuid4
+from xml.etree import ElementTree
 
 from sqlalchemy import insert, select, update
 from sqlalchemy.orm import Session
@@ -11,12 +16,13 @@ from app.schemas.inventory import (
     AnalyticsPeriod,
     AnalyticsWindow,
     InventoryMovementCreate,
+    MovementType,
     ProductAnalyticsSort,
     ProductCreate,
     SupplierCreate,
 )
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
-from app.utils.exceptions import AppError
+from app.utils.exceptions import AppError, ProductImportError
 from fastapi import UploadFile
 from app.utils.excel import load_excel_rows
 from app.utils.logger import logger
@@ -36,6 +42,16 @@ OUTBOUND_MOVEMENTS = {
 }
 OPEN_ALERT_STATUS = "pendiente"
 LOW_STOCK_ALERT_TYPES = {"stock_bajo", "sin_stock"}
+PRODUCT_IMPORT_ALLOWED_COLUMNS = {
+    "sku",
+    "nombre",
+    "descripcion",
+    "precio_venta",
+    "stock_minimo",
+    "unidad_medida",
+    "proveedor_id",
+}
+PRODUCT_IMPORT_REQUIRED_COLUMNS = {"sku", "nombre"}
 PERIOD_DAYS = {
     "7d": 7,
     "30d": 30,
@@ -127,6 +143,274 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
         select(products).where(products.c.id == product_id)
     ).mappings().one()
     return dict(row)
+
+
+def import_products_from_file(filename: str, content: bytes, current_user: User, db: Session) -> dict:
+    rows = parse_product_import_file(filename, content)
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+    suppliers = tables["proveedor"]
+
+    import_errors = []
+    skus = [row["sku"] for row in rows]
+    existing_skus = set()
+    if skus:
+        existing_skus = {
+            row["sku"]
+            for row in db.execute(select(products.c.sku).where(products.c.sku.in_(skus))).mappings()
+        }
+    for index, row in enumerate(rows, start=2):
+        if row["sku"] in existing_skus:
+            import_errors.append({"row": index, "column": "sku", "code": "existing_sku", "message": "SKU already exists"})
+
+        proveedor_id = row.get("proveedor_id")
+        if proveedor_id:
+            supplier = db.execute(
+                select(suppliers.c.id, suppliers.c.is_active).where(suppliers.c.id == proveedor_id)
+            ).mappings().first()
+            if supplier is None:
+                import_errors.append(
+                    {"row": index, "column": "proveedor_id", "code": "supplier_not_found", "message": "Supplier not found"}
+                )
+            elif not supplier["is_active"]:
+                import_errors.append(
+                    {"row": index, "column": "proveedor_id", "code": "supplier_inactive", "message": "Supplier is inactive"}
+                )
+
+    if import_errors:
+        raise ProductImportError("Invalid product import rows", "invalid_rows", import_errors)
+
+    now = _utcnow()
+    product_ids = [uuid4() for _row in rows]
+    insert_rows = [
+        {
+            "id": product_id,
+            "proveedor_id": row.get("proveedor_id"),
+            "sku": row["sku"],
+            "nombre": row["nombre"],
+            "descripcion": row.get("descripcion"),
+            "precio_venta": row["precio_venta"],
+            "stock_actual": Decimal("0"),
+            "stock_minimo": row["stock_minimo"],
+            "unidad_medida": row["unidad_medida"],
+            "updated_at": now,
+        }
+        for product_id, row in zip(product_ids, rows)
+    ]
+    try:
+        if insert_rows:
+            db.execute(insert(products), insert_rows)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    inserted = [
+        dict(row)
+        for row in db.execute(select(products).where(products.c.id.in_(product_ids))).mappings()
+    ]
+    return {"inserted": len(inserted), "products": inserted}
+
+
+def parse_product_import_file(filename: str, content: bytes) -> list[dict]:
+    if not content:
+        raise ProductImportError("Import file is empty", "empty_file", [])
+
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if extension == "csv":
+        raw_rows = _read_csv_rows(content)
+    elif extension == "xlsx":
+        raw_rows = _read_xlsx_rows(content)
+    else:
+        raise ProductImportError("Unsupported import file format", "unsupported_format", [])
+
+    if not raw_rows:
+        raise ProductImportError("Import file is empty", "empty_file", [])
+
+    return _normalize_product_import_rows(raw_rows)
+
+
+def _read_csv_rows(content: bytes) -> list[dict]:
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise ProductImportError("CSV file must be UTF-8 encoded", "invalid_format", [])
+    reader = csv.DictReader(StringIO(text))
+    if not reader.fieldnames:
+        raise ProductImportError("Import file is empty", "empty_file", [])
+    return list(reader)
+
+
+def _read_xlsx_rows(content: bytes) -> list[dict]:
+    try:
+        with zipfile.ZipFile(BytesIO(content)) as workbook:
+            shared_strings = _read_xlsx_shared_strings(workbook)
+            sheet_xml = workbook.read("xl/worksheets/sheet1.xml")
+    except (KeyError, zipfile.BadZipFile):
+        raise ProductImportError("Invalid XLSX file", "invalid_format", [])
+
+    try:
+        root = ElementTree.fromstring(sheet_xml)
+    except ElementTree.ParseError:
+        raise ProductImportError("Invalid XLSX file", "invalid_format", [])
+    namespace = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    matrix = []
+    for row in root.findall(".//a:sheetData/a:row", namespace):
+        values = {}
+        for cell in row.findall("a:c", namespace):
+            reference = cell.attrib.get("r", "")
+            column = _xlsx_column_index(reference)
+            values[column] = _read_xlsx_cell_value(cell, shared_strings, namespace)
+        if values:
+            matrix.append([values.get(index, "") for index in range(max(values) + 1)])
+    if not matrix:
+        return []
+    headers = [str(value).strip() for value in matrix[0]]
+    rows = []
+    for values in matrix[1:]:
+        if not any(str(value).strip() for value in values):
+            continue
+        rows.append({header: values[index] if index < len(values) else "" for index, header in enumerate(headers)})
+    return rows
+
+
+def _read_xlsx_shared_strings(workbook: zipfile.ZipFile) -> list[str]:
+    try:
+        shared_xml = workbook.read("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+    namespace = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    try:
+        root = ElementTree.fromstring(shared_xml)
+    except ElementTree.ParseError:
+        return []
+    strings = []
+    for item in root.findall("a:si", namespace):
+        text_parts = [node.text or "" for node in item.findall(".//a:t", namespace)]
+        strings.append("".join(text_parts))
+    return strings
+
+
+def _read_xlsx_cell_value(cell, shared_strings: list[str], namespace: dict[str, str]) -> str:
+    cell_type = cell.attrib.get("t")
+    if cell_type == "inlineStr":
+        text = cell.find(".//a:t", namespace)
+        return text.text if text is not None and text.text is not None else ""
+    value = cell.find("a:v", namespace)
+    if value is None or value.text is None:
+        return ""
+    if cell_type == "s":
+        try:
+            index = int(value.text)
+        except ValueError:
+            return ""
+        return shared_strings[index] if index < len(shared_strings) else ""
+    return value.text
+
+
+def _xlsx_column_index(reference: str) -> int:
+    match = re.match(r"([A-Z]+)", reference)
+    if not match:
+        return 0
+    index = 0
+    for char in match.group(1):
+        index = index * 26 + (ord(char) - ord("A") + 1)
+    return index - 1
+
+
+def _normalize_product_import_rows(raw_rows: list[dict]) -> list[dict]:
+    normalized_headers = {_normalize_header(header): header for header in raw_rows[0].keys() if header is not None}
+    columns = set(normalized_headers)
+    missing = sorted(PRODUCT_IMPORT_REQUIRED_COLUMNS - columns)
+    unexpected = sorted(columns - PRODUCT_IMPORT_ALLOWED_COLUMNS)
+    if missing or unexpected:
+        errors = [
+            {"column": column, "code": "missing_column", "message": "Required column is missing"}
+            for column in missing
+        ]
+        errors.extend(
+            {"column": column, "code": "unexpected_column", "message": "Column is not allowed"}
+            for column in unexpected
+        )
+        raise ProductImportError("Invalid product import columns", "invalid_columns", errors)
+
+    rows = []
+    errors = []
+    seen_skus = {}
+    for index, raw_row in enumerate(raw_rows, start=2):
+        row = {_normalize_header(key): value for key, value in raw_row.items() if key is not None}
+        if not any(_clean_text(value) for value in row.values()):
+            continue
+
+        sku = _clean_text(row.get("sku"))
+        nombre = _clean_text(row.get("nombre"))
+        if not sku:
+            errors.append({"row": index, "column": "sku", "code": "required", "message": "SKU is required"})
+        if not nombre:
+            errors.append({"row": index, "column": "nombre", "code": "required", "message": "Nombre is required"})
+        if sku:
+            if sku in seen_skus:
+                errors.append({"row": index, "column": "sku", "code": "duplicate_sku", "message": "SKU is duplicated in file"})
+            else:
+                seen_skus[sku] = index
+
+        normalized = {
+            "sku": sku,
+            "nombre": nombre,
+            "descripcion": _clean_optional_text(row.get("descripcion")),
+            "precio_venta": _parse_nonnegative_decimal(row.get("precio_venta"), "precio_venta", index, errors),
+            "stock_minimo": _parse_nonnegative_decimal(row.get("stock_minimo"), "stock_minimo", index, errors),
+            "unidad_medida": _clean_text(row.get("unidad_medida")) or "unidad",
+            "proveedor_id": _parse_optional_uuid(row.get("proveedor_id"), "proveedor_id", index, errors),
+        }
+        rows.append(normalized)
+
+    if errors:
+        raise ProductImportError("Invalid product import rows", "invalid_rows", errors)
+    if not rows:
+        raise ProductImportError("Import file is empty", "empty_file", [])
+    return rows
+
+
+def _normalize_header(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _clean_text(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _clean_optional_text(value) -> str | None:
+    cleaned = _clean_text(value)
+    return cleaned or None
+
+
+def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict]) -> Decimal:
+    cleaned = _clean_text(value)
+    if not cleaned:
+        return Decimal("0")
+    try:
+        parsed = Decimal(cleaned)
+    except (InvalidOperation, ValueError):
+        errors.append({"row": row, "column": column, "code": "invalid_decimal", "message": "Value must be numeric"})
+        return Decimal("0")
+    if parsed < Decimal("0"):
+        errors.append({"row": row, "column": column, "code": "negative_decimal", "message": "Value must be non-negative"})
+        return Decimal("0")
+    return parsed
+
+
+def _parse_optional_uuid(value, column: str, row: int, errors: list[dict]) -> UUID | None:
+    cleaned = _clean_text(value)
+    if not cleaned:
+        return None
+    try:
+        return UUID(cleaned)
+    except ValueError:
+        errors.append({"row": row, "column": column, "code": "invalid_uuid", "message": "Value must be a valid UUID"})
+        return None
 
 
 def list_inventory_movements(current_user: User, db: Session, product_id=None) -> list[dict]:
@@ -282,6 +566,126 @@ def get_product_analytics(
         "start_date": analytics_range["start"].date(),
         "end_date": analytics_range["end"].date(),
         "products": products,
+    }
+
+
+def get_inventory_metrics(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    product_id: UUID | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+    movements = tables["movimiento_inventario"]
+
+    product_query = select(
+        products.c.stock_actual,
+        products.c.stock_minimo,
+        products.c.is_active,
+    ).where(products.c.is_active.is_(True))
+    movement_query = (
+        select(movements.c.tipo_movimiento, movements.c.cantidad)
+        .where(movements.c.fecha >= analytics_range["start"])
+        .where(movements.c.fecha <= analytics_range["end"])
+    )
+    if product_id is not None:
+        product_query = product_query.where(products.c.id == product_id)
+        movement_query = movement_query.where(movements.c.producto_id == product_id)
+
+    summary = summarize_inventory_metrics(
+        [dict(row) for row in db.execute(product_query).mappings()],
+        [dict(row) for row in db.execute(movement_query).mappings()],
+    )
+    return {
+        "period": period,
+        "product_id": product_id,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        **summary,
+    }
+
+
+def list_inventory_history(
+    current_user: User,
+    db: Session,
+    *,
+    limit: int,
+    product_id: UUID | None = None,
+    movement_type: MovementType | None = None,
+) -> list[dict]:
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+    movements = tables["movimiento_inventario"]
+    query = (
+        select(
+            movements.c.id,
+            movements.c.producto_id,
+            products.c.sku,
+            products.c.nombre,
+            movements.c.tipo_movimiento,
+            movements.c.fecha,
+            movements.c.cantidad,
+            movements.c.stock_resultante,
+            movements.c.motivo,
+        )
+        .select_from(movements.join(products, movements.c.producto_id == products.c.id))
+        .order_by(movements.c.fecha.desc())
+        .limit(limit)
+    )
+    if product_id is not None:
+        query = query.where(movements.c.producto_id == product_id)
+    if movement_type is not None:
+        query = query.where(movements.c.tipo_movimiento == movement_type)
+    return [format_inventory_history_row(dict(row)) for row in db.execute(query).mappings()]
+
+
+def summarize_inventory_metrics(products: list[dict], movements: list[dict]) -> dict:
+    entradas = Decimal("0")
+    salidas = Decimal("0")
+    for movement in movements:
+        quantity = _to_decimal(movement["cantidad"])
+        if _movement_direction(movement["tipo_movimiento"]) == "in":
+            entradas += quantity
+        else:
+            salidas += quantity
+
+    stock_bajo = 0
+    sin_stock = 0
+    for product in products:
+        if not product.get("is_active", True):
+            continue
+        stock_actual = _to_decimal(product["stock_actual"])
+        stock_minimo = _to_decimal(product["stock_minimo"])
+        if stock_actual <= Decimal("0"):
+            sin_stock += 1
+        elif stock_actual <= stock_minimo:
+            stock_bajo += 1
+
+    return {
+        "entradas": entradas,
+        "salidas": salidas,
+        "stock_bajo": stock_bajo,
+        "sin_stock": sin_stock,
+    }
+
+
+def format_inventory_history_row(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "producto_id": row["producto_id"],
+        "sku": row["sku"],
+        "nombre": row["nombre"],
+        "tipo_movimiento": row["tipo_movimiento"],
+        "direction": _movement_direction(row["tipo_movimiento"]),
+        "fecha": row["fecha"],
+        "cantidad": _to_decimal(row["cantidad"]),
+        "stock_resultante": _to_decimal(row["stock_resultante"]),
+        "motivo": row.get("motivo"),
     }
 
 
