@@ -8,19 +8,11 @@ from app.schemas.users import UserCreate
 from app.utils.exceptions import AppError
 from app.schemas.companies import CompanyCreate
 from app.core.security import decode_access_token
+from app.utils.email import send_password_set_email, send_password_reset_email
 from app.core.security import hash_password, verify_password, create_access_token
 from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
 
 _reset_attempts: dict[str, list] = {}
-
-# ─── email placeholder ────────────────────────────────────────────
-def _send_password_set_email(email: str, token: str):
-    # TODO: replace with AWS SES when ready
-    print(f"[EMAIL] Send to {email} → /auth/set-password?token={token}")
-
-def _send_password_reset_email(email: str, token: str):
-    # TODO: replace with AWS SES when ready
-    print(f"[EMAIL] Send to {email} → /auth/reset-password?token={token}")
 
 def _check_rate_limit(email: str):
     now = datetime.now(timezone.utc)
@@ -73,8 +65,10 @@ def register_company(data: CompanyCreate, db: Session) -> Company:
         {"sub": str(admin.id), "purpose": "set_password"},
         expires_delta=timedelta(hours=48)
     )
-    _send_password_set_email(data.admin_email, token)
-
+    try:
+        send_password_set_email(data.admin_email, token)
+    except Exception as e:
+        print(f"[EMAIL ERROR] Failed to send to {data.admin_email}: {e}")
     return company
 
 # ─── login ────────────────────────────────────────────────────────
@@ -135,8 +129,10 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
         {"sub": str(employee.id), "purpose": "set_password"},
         expires_delta=timedelta(hours=48)
     )
-    _send_password_set_email(data.email, token)
-
+    try:
+        send_password_set_email(data.email, token)
+    except Exception as e:
+        print(f"[EMAIL ERROR] Failed to send to {data.email}: {e}")
     return employee
 
 # ─── set password ─────────────────────────────────────────────────
@@ -188,8 +184,10 @@ def resend_invitation(email: str, current_user: User, db: Session):
         {"sub": str(user.id), "purpose": "set_password"},
         expires_delta=timedelta(hours=48)
     )
-    _send_password_set_email(email, token)
-
+    try:
+        send_password_set_email(email, token)
+    except Exception as e:
+        print(f"[EMAIL ERROR] Failed to send to {email}: {e}")
     return {"message": "Invitation resent successfully"}
 
 def forgot_password(email: str, db: Session):
@@ -200,6 +198,8 @@ def forgot_password(email: str, db: Session):
             {"sub": str(user.id), "purpose": "reset_password"},
             expires_delta=timedelta(hours=48)
         )
-        _send_password_reset_email(email, token)
-    # always return the same response
+        try:
+            send_password_reset_email(email, token)
+        except Exception as e:
+            print(f"[EMAIL ERROR] Failed to send to {email}: {e}")    # always return the same response
     return {"message": "If that email exists, a reset link was sent"}
