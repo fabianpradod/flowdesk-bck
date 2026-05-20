@@ -177,7 +177,7 @@ def resend_invitation(email: str, current_user: User, db: Session):
         raise AppError(status_code=404, message="User not found")
     if user.is_active:
         raise AppError(status_code=400, message="User is already active")
-    if user.company_id != current_user.company_id:
+    if current_user.company_id and user.company_id != current_user.company_id:
         raise AppError(status_code=403, message="Not allowed")
 
     token = create_access_token(
