@@ -2,7 +2,7 @@ from openpyxl import load_workbook
 from app.utils.exceptions import AppError
 
 EXPECTED_HEADERS = [
-    "ID",
+    "SKU",
     "Nombre",
     "Stock Actual",
     "Stock Mínimo",

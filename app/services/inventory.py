@@ -14,7 +14,6 @@ from app.schemas.inventory import (
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
 from fastapi import UploadFile
-from openpyxl import load_workbook
 from app.utils.excel import load_excel_rows
 from app.utils.logger import logger
 from app.core.config import MAX_IMPORT_FILE_SIZE
@@ -345,27 +344,46 @@ def import_products_from_excel(current_user: User, db: Session, file: UploadFile
             if not sku or not nombre:
                 raise ValueError("SKU and Nombre are required")
             
-            existing = db.execute(select(products.c.sku == str(sku).strip().lower())).first()
+            normalized_sku = str(sku).strip().lower()
+            existing = db.execute(
+                select(products.c.id).where(products.c.sku == normalized_sku)
+            ).first()
 
             if existing:
                 raise ValueError("SKU already exists")
-            
+
             proveedor_id = None
 
             if proveedor:
-                supplier = db.execute(select(suppliers).where(suppliers.c.nombre == proveedor)).mappings().first()
+                supplier = db.execute(
+                    select(suppliers).where(suppliers.c.nombre == proveedor)
+                ).mappings().first()
 
                 if supplier is None:
                     raise ValueError(f"Supplier '{proveedor}' not found")
-                
+
                 if not supplier["is_active"]:
                     raise ValueError(f"Supplier '{proveedor}' is inactive")
-                
+
                 proveedor_id = supplier["id"]
 
             now = _utcnow()
 
-            db.execute(insert(products).values(id = uuid4(), proveedor_id = proveedor_id, sku = str(sku).strip().lower(), nombre = str(nombre).strip(), descripcion = descripcion, precio_venta = Decimal(str(precio_estandar or 0)), stock_actual = Decimal(str(stock_actual or 0)), stock_minimo = Decimal(str(stock_minimo or 0)), unidad_medida = "unidad", is_active = str(estado).lower() == "activo", updated_at = now))
+            db.execute(
+                insert(products).values(
+                    id=uuid4(),
+                    proveedor_id=proveedor_id,
+                    sku=normalized_sku,
+                    nombre=str(nombre).strip(),
+                    descripcion=descripcion,
+                    precio_venta=Decimal(str(precio_estandar or 0)),
+                    stock_actual=Decimal(str(stock_actual or 0)),
+                    stock_minimo=Decimal(str(stock_minimo or 0)),
+                    unidad_medida="unidad",
+                    is_active=str(estado).lower() == "activo",
+                    updated_at=now,
+                )
+            )
 
             inserted += 1
 

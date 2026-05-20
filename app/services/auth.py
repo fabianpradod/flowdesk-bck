@@ -80,10 +80,10 @@ def register_company(data: CompanyCreate, db: Session) -> Company:
 # ─── login ────────────────────────────────────────────────────────
 def login(email: str, password: str, db: Session) -> dict:
     user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(password, user.password):
+    if not user.password or not verify_password(password, user.password):
         raise AppError(status_code=401, message="Invalid credentials")
 
-    if not user.password:
+    if not user.is_active:
         raise AppError(status_code=403, message="Password not set yet, check your email")
 
     company = db.query(Company).filter(Company.id == user.company_id).first() if user.company_id else None
