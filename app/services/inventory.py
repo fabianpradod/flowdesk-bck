@@ -17,7 +17,10 @@ from app.schemas.inventory import (
 )
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
-
+from fastapi import UploadFile
+from app.utils.excel import load_excel_rows
+from app.utils.logger import logger
+from app.core.config import MAX_IMPORT_FILE_SIZE
 
 INBOUND_MOVEMENTS = {
     "entrada_compra",
@@ -87,6 +90,8 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
     products = tables["producto"]
     suppliers = tables["proveedor"]
 
+    sku = data.sku.strip().lower()
+
     if data.proveedor_id:
         supplier = db.execute(
             select(suppliers.c.id, suppliers.c.is_active).where(suppliers.c.id == data.proveedor_id)
@@ -97,7 +102,7 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
             raise AppError(status_code=400, message="Supplier is inactive")
 
     existing = db.execute(
-        select(products.c.id).where(products.c.sku == data.sku.strip())
+        select(products.c.id).where(products.c.sku == sku)
     ).first()
     if existing:
         raise AppError(status_code=400, message="SKU already exists")
@@ -108,7 +113,7 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
         insert(products).values(
             id=product_id,
             proveedor_id=data.proveedor_id,
-            sku=data.sku.strip(),
+            sku=sku,
             nombre=data.nombre.strip(),
             descripcion=data.descripcion,
             precio_venta=data.precio_venta,
@@ -138,10 +143,10 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]
     movements = tables["movimiento_inventario"]
-    alerts = tables["alerta"]
+    alerts = tables["alerta"] 
 
     product = db.execute(
-        select(products).where(products.c.id == data.producto_id)
+        select(products).where(products.c.id == data.producto_id).with_for_update()
     ).mappings().first()
     if product is None:
         raise AppError(status_code=404, message="Product not found")
@@ -151,11 +156,15 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     direction = _movement_direction(data.tipo_movimiento)
     stock_anterior = _to_decimal(product["stock_actual"])
     cantidad = _to_decimal(data.cantidad)
+
+    if cantidad <= 0:
+        raise AppError(status_code=400, message="Quantity must be greater than zero")
+
     delta = cantidad if direction == "in" else -cantidad
     stock_resultante = stock_anterior + delta
     if stock_resultante < Decimal("0"):
         raise AppError(status_code=400, message="Insufficient stock for this movement")
-
+    
     now = _utcnow()
     movement_id = uuid4()
 
@@ -190,9 +199,9 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
             now=now,
         )
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
-        raise
+        raise AppError(500, f"Inventory movement failed: {str(e)}")
 
     row = db.execute(
         select(movements).where(movements.c.id == movement_id)
@@ -542,3 +551,122 @@ def _to_decimal(value) -> Decimal:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+def update_product_status(current_user: User, db: Session, product_id, is_active: bool) -> dict:
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+
+    product = db.execute(
+        select(products).where(products.c.id == product_id)
+    ).mappings().first()
+
+    if product is None:
+        raise AppError(status_code=404, message="Product not found")
+
+    if product["is_active"] == is_active:
+        raise AppError(status_code=400, message="Product already has this status")
+
+    now = _utcnow()
+
+    try:
+        db.execute(
+            update(products)
+            .where(products.c.id == product_id)
+            .values(is_active=is_active, updated_at=now)
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Failed to update product status: {str(e)}")
+
+    updated = db.execute(
+        select(products).where(products.c.id == product_id)
+    ).mappings().one()
+
+    return dict(updated)
+
+def import_products_from_excel(current_user: User, db: Session, file: UploadFile,) -> dict:
+    if not file.filename.endswith(".xlsx"):
+        raise AppError(400, "Only .xlsx files are supported")
+    
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    if file_size > MAX_IMPORT_FILE_SIZE:
+        raise AppError(400, "File size exceeds the limit")
+    
+    tables = _get_tenant_tables_for_user(current_user)
+    products = tables["producto"]
+    suppliers = tables["proveedor"]
+    rows = load_excel_rows(file.file)
+    inserted = 0
+    errors = []
+
+    for index, row in enumerate(rows, start = 2):
+        try:
+            (sku, nombre, stock_actual, stock_minimo, precio_estandar, proveedor, descripcion, estado,) = row
+
+            if not sku or not nombre:
+                raise ValueError("SKU and Nombre are required")
+            
+            normalized_sku = str(sku).strip().lower()
+            existing = db.execute(
+                select(products.c.id).where(products.c.sku == normalized_sku)
+            ).first()
+
+            if existing:
+                raise ValueError("SKU already exists")
+
+            proveedor_id = None
+
+            if proveedor:
+                supplier = db.execute(
+                    select(suppliers).where(suppliers.c.nombre == proveedor)
+                ).mappings().first()
+
+                if supplier is None:
+                    raise ValueError(f"Supplier '{proveedor}' not found")
+
+                if not supplier["is_active"]:
+                    raise ValueError(f"Supplier '{proveedor}' is inactive")
+
+                proveedor_id = supplier["id"]
+
+            now = _utcnow()
+
+            db.execute(
+                insert(products).values(
+                    id=uuid4(),
+                    proveedor_id=proveedor_id,
+                    sku=normalized_sku,
+                    nombre=str(nombre).strip(),
+                    descripcion=descripcion,
+                    precio_venta=Decimal(str(precio_estandar or 0)),
+                    stock_actual=Decimal(str(stock_actual or 0)),
+                    stock_minimo=Decimal(str(stock_minimo or 0)),
+                    unidad_medida="unidad",
+                    is_active=str(estado).lower() == "activo",
+                    updated_at=now,
+                )
+            )
+
+            inserted += 1
+
+        except Exception as e:
+            errors.append({"row": index, "error": str(e)})
+
+    try:
+        db.commit()
+    
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Import failed: {str(e)}")
+
+    logger.info(f"Imported {inserted} products with {len(errors)} errors")
+
+    return {
+        "total_rows": len(rows),
+        "inserted": inserted,
+        "errors": errors,
+    }

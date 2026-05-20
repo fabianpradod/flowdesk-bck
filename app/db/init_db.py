@@ -17,5 +17,6 @@ def init_db():
     try:
         seed_roles(db)
         seed_superadmin(db)
+
     finally:
         db.close()

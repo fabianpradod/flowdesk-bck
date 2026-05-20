@@ -6,10 +6,10 @@ from app.core.security import hash_password
 from app.core.config import SUPERADMIN_EMAIL, SUPERADMIN_USERNAME, SUPERADMIN_PASSWORD
 
 DEFAULT_ROLES = [
-    {"name": "superadmin", "description": "Full access to all companies and settings"},
-    {"name": "admin",     "description": "Full access, manages users and company settings"},
-    {"name": "manager",   "description": "Can manage employees and view reports"},
-    {"name": "employee",  "description": "Basic access"},
+    {"name": "superadmin", "description": "Full access to all resources and settings."},
+    {"name": "admin", "description": "Manage inventory, sales, and users within their company."},
+    {"name": "manager", "description": "Manage inventory and sales, but cannot manage users."},
+    {"name": "employee", "description": "View inventory and sales, but cannot make changes."},
 ]
 
 def seed_roles(db: Session):

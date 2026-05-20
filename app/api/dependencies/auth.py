@@ -28,7 +28,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user:
-        raise AppError(status_code=401, message="Invalid or expired token")  # ← was 404
+        raise AppError(status_code=401, message="Invalid or expired token")  # was 404
 
     return user
 

@@ -1,7 +1,6 @@
 import uuid
 
 from sqlalchemy import Column, String, Integer, DateTime, text
-
 from app.core.database import Base
 
 class Role(Base):

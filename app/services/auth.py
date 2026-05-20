@@ -80,10 +80,10 @@ def register_company(data: CompanyCreate, db: Session) -> Company:
 # ─── login ────────────────────────────────────────────────────────
 def login(email: str, password: str, db: Session) -> dict:
     user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(password, user.password):
+    if not user.password or not verify_password(password, user.password):
         raise AppError(status_code=401, message="Invalid credentials")
 
-    if not user.password:
+    if not user.is_active:
         raise AppError(status_code=403, message="Password not set yet, check your email")
 
     company = db.query(Company).filter(Company.id == user.company_id).first() if user.company_id else None
@@ -108,15 +108,23 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
     else:
         target_company_id = admin.company_id  # taken from token as before
 
-    existing = db.query(User).filter(User.email == data.email).first()
+    existing = db.query(User).filter(User.email == data.email, User.company_id == target_company_id).first()
+
     if existing:
         raise AppError(status_code=400, message="Email already registered")
+    
+    role = db.query(Role).filter(Role.id == data.role_id).first()
+    if not role:
+        raise AppError(400, "Invalid role")
+
+    if role.name == "superadmin":
+        raise AppError(403, "Cannot assign superadmin role")
 
     employee = User(
         username=data.username,
         email=data.email,
         password="",  # not set yet
-        role_id=data.role_id,
+        role_id=role.id,
         company_id=target_company_id,
     )
     db.add(employee)
@@ -167,12 +175,14 @@ def reset_password(token: str, new_password: str, db: Session) -> dict:
 
     return {"message": "Password reset successfully"}
 
-def resend_invitation(email: str, db: Session):
+def resend_invitation(email: str, current_user: User, db: Session):
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise AppError(status_code=404, message="User not found")
     if user.is_active:
         raise AppError(status_code=400, message="User is already active")
+    if user.company_id != current_user.company_id:
+        raise AppError(status_code=403, message="Not allowed")
 
     token = create_access_token(
         {"sub": str(user.id), "purpose": "set_password"},

@@ -74,6 +74,10 @@ class ProductResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProductStatusUpdate(BaseModel):
+    is_active: bool
+
+
 class InventoryMovementCreate(BaseModel):
     producto_id: UUID
     tipo_movimiento: MovementType
@@ -109,6 +113,17 @@ class InventoryAlertResponse(BaseModel):
     resuelta_en: datetime | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProductImportError(BaseModel):
+    row: int
+    error: str
+
+
+class ProductImportResponse(BaseModel):
+    total_rows: int
+    inserted: int
+    errors: list[ProductImportError]
 
 
 class InventoryAnalyticsPoint(BaseModel):
