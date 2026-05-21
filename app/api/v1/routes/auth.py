@@ -1,7 +1,8 @@
 import app.services.auth as auth_service
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from uuid import UUID
 
 from app.models.users import User
 from app.api.dependencies.auth import get_db, require_role

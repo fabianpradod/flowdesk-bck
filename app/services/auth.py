@@ -13,6 +13,7 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
 
 _reset_attempts: dict[str, list] = {}
+BLOCKED_EMPLOYEE_ROLES = {"superadmin"}
 
 def _check_rate_limit(email: str):
     now = datetime.now(timezone.utc)
@@ -100,24 +101,30 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
             raise AppError(status_code=404, message="Company not found")
         target_company_id = data.company_id
     else:
-        target_company_id = admin.company_id  # taken from token as before
+        target_company_id = admin.company_id
 
-    existing = db.query(User).filter(User.email == data.email, User.company_id == target_company_id).first()
-
-    if existing:
-        raise AppError(status_code=400, message="Email already registered")
-    
     role = db.query(Role).filter(Role.id == data.role_id).first()
     if not role:
-        raise AppError(400, "Invalid role")
+        raise AppError(status_code=404, message="Role not found")
+    if role.name in BLOCKED_EMPLOYEE_ROLES:
+        raise AppError(
+            status_code=400,
+            message="Cannot create superadmin users from employees endpoint",
+            code="invalid_employee_role",
+        )
 
-    if role.name == "superadmin":
-        raise AppError(403, "Cannot assign superadmin role")
+    existing = db.query(User).filter(User.email == data.email, User.company_id == target_company_id).first()
+    if existing:
+        raise AppError(status_code=400, message="Email already registered")
+
+    existing_username = db.query(User).filter(User.username == data.username).first()
+    if existing_username:
+        raise AppError(status_code=400, message="Username already registered")
 
     employee = User(
         username=data.username,
         email=data.email,
-        password="",  # not set yet
+        password="",
         role_id=role.id,
         company_id=target_company_id,
     )
@@ -134,6 +141,14 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
     except Exception as e:
         print(f"[EMAIL ERROR] Failed to send to {data.email}: {e}")
     return employee
+
+def list_employees(current_user: User, db: Session, company_id=None) -> list[User]:
+    query = db.query(User)
+    if current_user.company_id:
+        query = query.filter(User.company_id == current_user.company_id)
+    elif company_id:
+        query = query.filter(User.company_id == company_id)
+    return query.order_by(User.created_at.desc()).all()
 
 # ─── set password ─────────────────────────────────────────────────
 def set_password(token: str, new_password: str, db: Session) -> dict:
