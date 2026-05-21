@@ -182,3 +182,37 @@ def product_analytics(
         start_date=start_date,
         end_date=end_date,
     )
+
+@router.get("/metrics", response_model=InventoryMetricsResponse)
+def inventory_metrics(
+    period: AnalyticsPeriod = Query(default="30d"),
+    product_id: UUID | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return inventory_service.get_inventory_metrics(
+        current_user,
+        db,
+        period=period,
+        product_id=product_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+@router.get("/history", response_model=list[InventoryHistoryRow])
+def inventory_history(
+    limit: int = Query(default=20, ge=1, le=100),
+    product_id: UUID | None = Query(default=None),
+    movement_type: MovementType | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return inventory_service.list_inventory_history(
+        current_user,
+        db,
+        limit=limit,
+        product_id=product_id,
+        movement_type=movement_type,
+    )
