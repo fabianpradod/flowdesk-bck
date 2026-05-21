@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.config import FRONTEND_URL
 from app.db.init_db import init_db
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
@@ -15,12 +16,13 @@ app = FastAPI()
 init_db()
 
 # ─── CORS ─────────────────────────────────────────────────────────
+_cors_origins = ["http://localhost:5173", "http://localhost:3000"]
+if FRONTEND_URL:
+    _cors_origins.append(FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
