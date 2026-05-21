@@ -75,7 +75,7 @@ def register_company(data: CompanyCreate, db: Session) -> Company:
 # ─── login ────────────────────────────────────────────────────────
 def login(email: str, password: str, db: Session) -> dict:
     user = db.query(User).filter(User.email == email).first()
-    if not user.password or not verify_password(password, user.password):
+    if not user or not user.password or not verify_password(password, user.password):
         raise AppError(status_code=401, message="Invalid credentials")
 
     if not user.is_active:

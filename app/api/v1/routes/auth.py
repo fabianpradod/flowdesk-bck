@@ -52,3 +52,8 @@ def forgot_password(data: EmailRequest, db: Session = Depends(get_db)):
 def reset_password(data: PasswordReset, db: Session = Depends(get_db)):
     """Restablece la contraseña usando el token enviado por correo."""
     return auth_service.reset_password(data.token, data.new_password, db)
+
+@router.get("/employees", response_model=list[UserResponse], summary="Listar empleados")
+def employees(db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
+    """Retorna los empleados de la empresa del admin autenticado."""
+    return auth_service.list_employees(current_user, db)

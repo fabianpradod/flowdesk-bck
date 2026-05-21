@@ -115,15 +115,9 @@ class InventoryAlertResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProductImportError(BaseModel):
-    row: int
-    error: str
-
-
 class ProductImportResponse(BaseModel):
-    total_rows: int
     inserted: int
-    errors: list[ProductImportError]
+    products: list[ProductResponse]
 
 
 class InventoryAnalyticsPoint(BaseModel):
