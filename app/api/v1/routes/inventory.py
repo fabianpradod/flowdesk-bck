@@ -84,10 +84,10 @@ def update_product_status(
 def import_products(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("admin")),
+    current_user: User = Depends(require_role("manager")),
 ):
     """Importa productos desde un archivo .xlsx. Máximo 5MB. Columnas requeridas: SKU, Nombre, Stock Actual, Stock Mínimo, Precio Estandar, Proveedor, Descripción, Estado."""
-    return inventory_service.import_products_from_excel(current_user, db, file)
+    return inventory_service.import_products_from_file(file.filename or "", file.file.read(), current_user, db)
 
 
 @router.get("/movements", response_model=list[InventoryMovementResponse], summary="Listar movimientos")
