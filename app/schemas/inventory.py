@@ -180,9 +180,6 @@ class ProductAnalyticsResponse(BaseModel):
     products: list[ProductAnalyticsRow]
 
 
-class ProductImportResponse(BaseModel):
-    inserted: int
-    products: list[ProductResponse]
 
 
 class InventoryMetricsResponse(BaseModel):

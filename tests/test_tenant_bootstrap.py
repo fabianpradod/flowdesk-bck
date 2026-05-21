@@ -156,7 +156,7 @@ class TenantBootstrapTests(unittest.TestCase):
         with (
             patch("app.services.auth.bootstrap_tenant_schema") as bootstrap_mock,
             patch("app.services.auth.create_access_token", return_value="test-token"),
-            patch("app.services.auth._send_password_set_email") as send_email_mock,
+            patch("app.services.auth.send_password_set_email") as send_email_mock,
         ):
             company = register_company(payload, db)
 
@@ -184,7 +184,7 @@ class TenantBootstrapTests(unittest.TestCase):
 
         with (
             patch("app.services.auth.bootstrap_tenant_schema", side_effect=RuntimeError("boom")),
-            patch("app.services.auth._send_password_set_email") as send_email_mock,
+            patch("app.services.auth.send_password_set_email") as send_email_mock,
         ):
             with self.assertRaises(RuntimeError):
                 register_company(payload, db)
