@@ -65,3 +65,19 @@ def test_import_duplicate_sku():
         }
     )
     assert response.status_code in [400, 409]
+
+def test_csv_injection(client):
+    token = "admin-token"
+    csv_content = b"sku,nombre\n=cmd|' /C calc'!A0,Product"
+    file = io.BytesIO(csv_content)
+
+    response = client.post(
+        "/api/v1/inventory/products/import",
+        headers={
+            "Authorization": f"Bearer {token}"
+        },
+        files={
+            "file": ("products.csv", file, "text/csv")
+        }
+    )
+    assert response.status_code == 400

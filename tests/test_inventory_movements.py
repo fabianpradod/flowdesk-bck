@@ -66,3 +66,19 @@ def test_invalid_inventory_quantity():
         }
     )
     assert response.status_code == 400
+
+def test_excessive_quantity(client):
+    token = "admin-token"
+
+    response = client.post(
+        "/api/v1/inventory/movements",
+        headers={
+            "Authorization": f"Bearer {token}"
+        },
+        json={
+            "product_id": 1,
+            "quantity": 999999999999999,
+            "movement_type": "OUT"
+        }
+    )
+    assert response.status_code == 400
