@@ -60,6 +60,25 @@ PERIOD_DAYS = {
     "12m": 366,
 }
 
+MAX_IMPORT_ROWS = 5000
+
+def _validate_csv_injection(value: str, row: int, column: str, errors: list[dict]):
+    if isinstance(value, str):
+        if value.startswith(("=", "+", "-", "@")):
+            errors.append({
+                "row": row,
+                "column": column,
+                "code": "csv_injection",
+                "message": "Potential CSV injection detected"
+            })
+
+def _validate_import_size(raw_rows: list[dict]):
+    if len(raw_rows) > MAX_IMPORT_ROWS:
+        raise ProductImportError(
+            "Import exceeds maximum allowed rows",
+            "import_too_large",
+            []
+        )
 
 def list_suppliers(current_user: User, db: Session) -> list[dict]:
     tables = _get_tenant_tables_for_user(current_user)
@@ -227,6 +246,8 @@ def parse_product_import_file(filename: str, content: bytes) -> list[dict]:
     if not raw_rows:
         raise ProductImportError("Import file is empty", "empty_file", [])
 
+    _validate_import_size(raw_rows)
+
     return _normalize_product_import_rows(raw_rows)
 
 
@@ -339,6 +360,15 @@ def _normalize_product_import_rows(raw_rows: list[dict]) -> list[dict]:
     seen_skus = {}
     for index, raw_row in enumerate(raw_rows, start=2):
         row = {_normalize_header(key): value for key, value in raw_row.items() if key is not None}
+        
+        for key, value in row.items():
+            _validate_csv_injection(
+                str(value),
+                index,
+                key,
+                errors
+            )
+
         if not any(_clean_text(value) for value in row.values()):
             continue
 
@@ -440,6 +470,12 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     direction = _movement_direction(data.tipo_movimiento)
     stock_anterior = _to_decimal(product["stock_actual"])
     cantidad = _to_decimal(data.cantidad)
+
+    if cantidad > Decimal("999999999"):
+        raise AppError(
+            status_code=400,
+            message="Quantity exceeds maximum allowed value"
+        )
 
     if cantidad <= 0:
         raise AppError(status_code=400, message="Quantity must be greater than zero")
