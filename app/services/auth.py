@@ -14,6 +14,23 @@ from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
 
 _reset_attempts: dict[str, list] = {}
 BLOCKED_EMPLOYEE_ROLES = {"superadmin"}
+ALLOWED_EMPLOYEE_CREATOR_ROLES = {"admin", "superadmin"}
+
+def validate_role_permission(current_user: User, allowed_roles: set[str]):
+    role_name = current_user.role.name if current_user.role else None
+
+    if role_name not in allowed_roles:
+        raise AppError(
+            status_code=403,
+            message="Insufficient permissions"
+        )
+
+def validate_password_reuse(user: User, new_password: str):
+    if user.password and verify_password(new_password, user.password):
+        raise AppError(
+            status_code=400,
+            message="New password cannot match current password"
+        )
 
 def _check_rate_limit(email: str):
     now = datetime.now(timezone.utc)
@@ -93,6 +110,11 @@ def login(email: str, password: str, db: Session) -> dict:
     return {"access_token": token, "token_type": "bearer"}
 
 def create_employee(data: UserCreate, admin: User, db: Session) -> User:
+    validate_role_permission(
+        admin,
+        ALLOWED_EMPLOYEE_CREATOR_ROLES
+    )
+    
     if not admin.company_id:  # superadmin
         if not data.company_id:
             raise AppError(status_code=400, message="company_id is required when creating employees as superadmin")
@@ -162,6 +184,7 @@ def set_password(token: str, new_password: str, db: Session) -> dict:
     if not user:
         raise AppError(status_code=404, message="User not found")
 
+    validate_password_reuse(user, new_password)
     user.password = hash_password(new_password)
     user.is_active = True
     db.commit()
@@ -181,6 +204,7 @@ def reset_password(token: str, new_password: str, db: Session) -> dict:
     if not user.is_active:
         raise AppError(status_code=403, message="Account is not active")
 
+    validate_password_reuse(user, new_password)
     user.password = hash_password(new_password)
     db.commit()
 
