@@ -69,9 +69,9 @@ def seed_demo_data(db: Session):
 
 def _seed_demo_users(db: Session, company: Company, roles: dict[str, Role]) -> None:
     users = [
-        ("demo_admin", "admin.demo@flowdesk.local", roles["admin"].id),
-        ("demo_manager", "manager.demo@flowdesk.local", roles["manager"].id),
-        ("demo_employee", "employee.demo@flowdesk.local", roles["employee"].id),
+        ("demo_admin", "admin.demo@flowdesk.com", roles["admin"].id),
+        ("demo_manager", "manager.demo@flowdesk.com", roles["manager"].id),
+        ("demo_employee", "employee.demo@flowdesk.com", roles["employee"].id),
     ]
     for username, email, role_id in users:
         existing = db.query(User).filter(User.email == email).first()
