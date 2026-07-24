@@ -8,10 +8,10 @@ def test_employee_cannot_create_admin():
 
     response = client.post(
         "/api/v1/auth/employees",
-        headers={
+        headers = {
             "Authorization": f"Bearer {employee_token}"
         },
-        json={
+        json = {
             "email": "admin2@test.com",
             "role": "admin"
         }
@@ -23,21 +23,21 @@ def test_employee_cannot_import_products():
 
     response = client.post(
         "/api/v1/inventory/products/import",
-        headers={
+        headers = {
             "Authorization": f"Bearer {employee_token}"
         }
     )
     assert response.status_code == 403
 
-def test_admin_can_create_employee():
+def test_admin_can_create_employee(admin_client):
     admin_token = "admin-token"
 
-    response = client.post(
+    response = admin_client.post(
         "/api/v1/auth/employees",
-        headers={
+        headers = {
             "Authorization": f"Bearer {admin_token}"
         },
-        json={
+        json = {
             "email": "employee@test.com",
             "role": "employee"
         }
@@ -49,10 +49,10 @@ def test_superadmin_can_create_company():
 
     response = client.post(
         "/api/v1/companies",
-        headers={
+        headers = {
             "Authorization": f"Bearer {superadmin_token}"
         },
-        json={
+        json = {
             "name": "Test Company"
         }
     )
