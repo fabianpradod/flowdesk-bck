@@ -7,9 +7,9 @@ client = TestClient(app)
 def test_login_success():
     response = client.post(
         "/api/v1/auth/login",
-        json={
-            "email": "admin@test.com",
-            "password": "123456"
+        json = {
+            "email":"admin.demo@flowdesk.com",
+            "password":"<DEMO_USER_PASSWORD>"
         }
     )
     assert response.status_code == 200
@@ -18,7 +18,7 @@ def test_login_success():
 def test_login_invalid_password():
     response = client.post(
         "/api/v1/auth/login",
-        json={
+        json = {
             "email": "admin@test.com",
             "password": "wrongpassword"
         }
@@ -28,7 +28,7 @@ def test_login_invalid_password():
 def test_login_nonexistent_user():
     response = client.post(
         "/api/v1/auth/login",
-        json={
+        json = {
             "email": "fake@test.com",
             "password": "123456"
         }
@@ -38,7 +38,7 @@ def test_login_nonexistent_user():
 def test_login_inactive_user():
     response = client.post(
         "/api/v1/auth/login",
-        json={
+        json = {
             "email": "inactive@test.com",
             "password": "123456"
         }
@@ -48,7 +48,7 @@ def test_login_inactive_user():
 def test_invalid_token_access():
     response = client.get(
         "/api/v1/inventory/products",
-        headers={
+        headers = {
             "Authorization": "Bearer invalidtoken"
         }
     )
@@ -57,7 +57,7 @@ def test_invalid_token_access():
 def test_reset_password():
     response = client.post(
         "/api/v1/auth/password/reset",
-        json={
+        json = {
             "token": "fake-token",
             "new_password": "newpassword123"
         }
@@ -67,7 +67,7 @@ def test_reset_password():
 def test_set_password():
     response = client.post(
         "/api/v1/auth/password/set",
-        json={
+        json = {
             "token": "fake-token",
             "password": "12345678"
         }
@@ -77,9 +77,64 @@ def test_set_password():
 def test_reuse_old_password():
     response = client.post(
         "/api/v1/auth/password/reset",
-        json={
+        json = {
             "token": "fake-token",
             "new_password": "123456"
         }
     )
     assert response.status_code in [400, 401]
+
+def test_login_without_password():
+    response = client.post(
+        "/api/v1/auth/login",
+        json = {
+            "email": "admin.demo@flowdesk.com",
+            "password": ""
+        }
+    )
+
+    assert response.status_code in [401,422]
+
+def test_login_invalid_payload():
+    response = client.post(
+        "/api/v1/auth/login",
+        json = {}
+    )
+
+    assert response.status_code == 422
+
+def test_invalid_jwt():
+    response = client.get(
+        "/api/v1/users",
+        headers = {
+            "Authorization":"Bearer abc.def.ghi"
+        }
+    )
+
+    assert response.status_code == 401
+
+def test_forgot_password_unknown_email():
+    response = client.post(
+        "/api/v1/auth/password/forgot",
+        json = {
+            "email":"noexiste@test.com"
+        }
+    )
+
+    assert response.status_code == 200
+
+def test_forgot_password_rate_limit():
+    email = "admin.demo@flowdesk.com"
+
+    for _ in range(3):
+        client.post(
+            "/api/v1/auth/password/forgot",
+            json = {"email":email}
+        )
+
+    response = client.post(
+        "/api/v1/auth/password/forgot",
+        json = {"email":email}
+    )
+
+    assert response.status_code==429
