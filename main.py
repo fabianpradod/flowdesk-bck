@@ -12,7 +12,22 @@ from app.api.v1.routes.roles import router as roles_router
 from app.api.v1.routes.inventory import router as inventory_router
 from app.utils.exceptions import build_error_payload
 
-app = FastAPI()
+app = FastAPI(
+    title = "FlowDesk API",
+    description = """API REST para la gestión de:
+        - Autenticación
+        - Usuarios
+        - Empresas
+        - Inventario
+        - Tenants
+
+    Cada empresa utiliza un esquema independiente.""",
+    version = "1.0.0",
+    contact = {
+        "name": "FlowDesk Team",
+    },
+)
+
 init_db()
 
 # ─── CORS ─────────────────────────────────────────────────────────
