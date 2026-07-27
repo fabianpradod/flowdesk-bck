@@ -20,6 +20,7 @@ from app.schemas.inventory import (
     ProductAnalyticsSort,
     ProductCreate,
     SupplierCreate,
+    SupplierUpdate,
 )
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError, ProductImportError
@@ -80,24 +81,40 @@ def _validate_import_size(raw_rows: list[dict]):
             []
         )
 
-def list_suppliers(current_user: User, db: Session) -> list[dict]:
+def list_suppliers(
+    current_user: User,
+    db: Session,
+    search: str | None = None,
+    is_active: bool | None = None,
+) -> list[dict]:
     tables = _get_tenant_tables_for_user(current_user)
     suppliers = tables["proveedor"]
-    rows = db.execute(
-        select(suppliers).order_by(suppliers.c.nombre.asc())
-    ).mappings()
+    query = select(suppliers)
+    if search:
+        query = query.where(suppliers.c.nombre.ilike(f"%{search.strip()}%"))
+    if is_active is not None:
+        query = query.where(suppliers.c.is_active == is_active)
+    rows = db.execute(query.order_by(suppliers.c.nombre.asc())).mappings()
     return [dict(row) for row in rows]
+
+
+def get_supplier(current_user: User, db: Session, supplier_id) -> dict:
+    tables = _get_tenant_tables_for_user(current_user)
+    return _fetch_supplier(db, tables["proveedor"], supplier_id)
 
 
 def create_supplier(data: SupplierCreate, current_user: User, db: Session) -> dict:
     tables = _get_tenant_tables_for_user(current_user)
     suppliers = tables["proveedor"]
+    nombre = data.nombre.strip()
+    _assert_supplier_name_available(db, suppliers, nombre)
+
     now = _utcnow()
     supplier_id = uuid4()
     db.execute(
         insert(suppliers).values(
             id=supplier_id,
-            nombre=data.nombre.strip(),
+            nombre=nombre,
             telefono=data.telefono,
             correo=data.correo,
             direccion=data.direccion,
@@ -109,6 +126,101 @@ def create_supplier(data: SupplierCreate, current_user: User, db: Session) -> di
         select(suppliers).where(suppliers.c.id == supplier_id)
     ).mappings().one()
     return dict(row)
+
+
+def update_supplier(data: SupplierUpdate, current_user: User, db: Session, supplier_id) -> dict:
+    tables = _get_tenant_tables_for_user(current_user)
+    suppliers = tables["proveedor"]
+    _fetch_supplier(db, suppliers, supplier_id)
+
+    changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        raise AppError(status_code=400, message="No fields to update")
+
+    if "nombre" in changes:
+        changes["nombre"] = changes["nombre"].strip()
+        _assert_supplier_name_available(db, suppliers, changes["nombre"], exclude_id=supplier_id)
+
+    changes["updated_at"] = _utcnow()
+    try:
+        db.execute(update(suppliers).where(suppliers.c.id == supplier_id).values(**changes))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Failed to update supplier: {str(e)}")
+
+    return _fetch_supplier(db, suppliers, supplier_id)
+
+
+def update_supplier_status(current_user: User, db: Session, supplier_id, is_active: bool) -> dict:
+    tables = _get_tenant_tables_for_user(current_user)
+    suppliers = tables["proveedor"]
+    supplier = _fetch_supplier(db, suppliers, supplier_id)
+
+    if supplier["is_active"] == is_active:
+        raise AppError(status_code=400, message="Supplier already has this status")
+
+    if not is_active:
+        _assert_supplier_has_no_active_products(db, tables["producto"], supplier_id)
+
+    _set_supplier_active(db, suppliers, supplier_id, is_active)
+    return _fetch_supplier(db, suppliers, supplier_id)
+
+
+def delete_supplier(current_user: User, db: Session, supplier_id) -> None:
+    tables = _get_tenant_tables_for_user(current_user)
+    suppliers = tables["proveedor"]
+    supplier = _fetch_supplier(db, suppliers, supplier_id)
+
+    if not supplier["is_active"]:
+        return
+
+    _assert_supplier_has_no_active_products(db, tables["producto"], supplier_id)
+    _set_supplier_active(db, suppliers, supplier_id, False)
+
+
+def _fetch_supplier(db: Session, suppliers, supplier_id) -> dict:
+    row = db.execute(
+        select(suppliers).where(suppliers.c.id == supplier_id)
+    ).mappings().first()
+    if row is None:
+        raise AppError(status_code=404, message="Supplier not found")
+    return dict(row)
+
+
+def _assert_supplier_name_available(db: Session, suppliers, nombre: str, exclude_id=None) -> None:
+    query = select(suppliers.c.id).where(
+        suppliers.c.nombre.ilike(nombre),
+        suppliers.c.is_active.is_(True),
+    )
+    if exclude_id is not None:
+        query = query.where(suppliers.c.id != exclude_id)
+    if db.execute(query).first():
+        raise AppError(status_code=400, message="Supplier name already exists")
+
+
+def _assert_supplier_has_no_active_products(db: Session, products, supplier_id) -> None:
+    linked = db.execute(
+        select(products.c.id).where(
+            products.c.proveedor_id == supplier_id,
+            products.c.is_active.is_(True),
+        )
+    ).first()
+    if linked:
+        raise AppError(status_code=400, message="Supplier still has active products")
+
+
+def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool) -> None:
+    try:
+        db.execute(
+            update(suppliers)
+            .where(suppliers.c.id == supplier_id)
+            .values(is_active=is_active, updated_at=_utcnow())
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Failed to update supplier status: {str(e)}")
 
 
 def list_products(current_user: User, db: Session) -> list[dict]:
