@@ -1,4 +1,5 @@
 import time
+from datetime import timedelta
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 
 def test_create_token():
@@ -35,11 +36,8 @@ def test_decode_invalid_token():
 
 def test_decode_expired_token():
     token = create_access_token(
-        {
-            "sub": "1",
-            "role": "admin",
-        },
-        expires_delta=-1,
+        {"sub": "1", "role": "admin"},
+        expires_delta=timedelta(seconds=-1),
     )
 
     payload = decode_access_token(token)

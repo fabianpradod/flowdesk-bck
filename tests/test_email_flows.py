@@ -35,27 +35,20 @@ def test_reset_email_sent(mock_send):
     response = client.post(
         "/api/v1/auth/password/forgot",
         json = {
-            "email": "employee@test.com"
+            "email": "admin.demo@flowdesk.com"
         }
     )
-
     assert response.status_code == 200
     mock_send.assert_called_once()
 
 @patch("app.services.auth.send_password_set_email")
-def test_resend_invitation(mock_send):
-    app.dependency_overrides[get_current_user] = override_admin
-
-    client = TestClient(app)
-
-    response = client.post(
+def test_resend_invitation(mock_send, superadmin_client):
+    response = superadmin_client.post(
         "/api/v1/auth/invitations/resend",
         json = {
-            "email":"employee@test.com"
+            "email": "inactive@test.com"
         }
     )
-
-    app.dependency_overrides.clear()
 
     assert response.status_code == 200
     mock_send.assert_called_once()

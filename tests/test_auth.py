@@ -41,7 +41,7 @@ def test_login_inactive_user():
         "/api/v1/auth/login",
         json = {
             "email": "inactive@test.com",
-            "password": "123456"
+            "password": DEMO_USER_PASSWORD
         }
     )
     assert response.status_code == 403
