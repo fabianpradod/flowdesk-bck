@@ -10,7 +10,7 @@ from app.utils.exceptions import AppError
 from app.core.database import SessionLocal
 from app.core.security import decode_access_token
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "/api/v1/auth/login", description = "JWT Bearer Token")
 
 ELEVATED_ROLES = {"admin", "superadmin"}
 

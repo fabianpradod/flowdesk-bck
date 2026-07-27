@@ -14,6 +14,14 @@ class UserCreate(UserBase):
     # password comes from the email flow
     # company_id comes from the admin's token
 
+    model_config = ConfigDict(
+        json_schema_extra = {
+            "example": {
+                "username": "johndoe",
+                "email": "johndoe@empresa.com"
+            }
+        }
+    )
 
 class UserResponse(UserBase):
     id: UUID
@@ -36,16 +44,52 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+    model_config = ConfigDict(
+        json_schema_extra = {
+            "example": {
+                "email": "admin@empresa.com",
+                "password": "Password123!"
+            }
+        }
+    )
+
 class PasswordSet(BaseModel):
     token: str        # from the email link
     new_password: str
+
+    model_config = ConfigDict(
+        json_schema_extra = {
+            "example": {
+                "token": "12345",
+                "new_password": "NewPassword123!"
+            }
+        }
+    )
+
 
 class PasswordReset(BaseModel):
     token: str
     new_password: str
 
+    model_config = ConfigDict(
+        json_schema_extra = {
+            "example": {
+                "token": "12345",
+                "new_password": "NewPassword123!"
+            }
+        }
+    )
+
 class EmailRequest(BaseModel):
     email: EmailStr
+
+    model_config = ConfigDict(
+        json_schema_extra = {
+            "example": {
+                "email": "admin@empresa.com"
+            }
+        }
+    )
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
