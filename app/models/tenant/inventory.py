@@ -73,3 +73,52 @@ class Alerta(Base):
     fecha = Column(DateTime, nullable=False, server_default=text("now()"))
     estado = Column(String(20), nullable=False, server_default=text("'pendiente'"))
     resuelta_en = Column(DateTime, nullable=True)
+
+class ProveedorProducto(Base):
+    __tablename__ = "proveedor_producto"
+    __table_args__ = (
+        CheckConstraint(
+            "precio_cotizacion >= 0",
+            name="ck_proveedor_producto_precio_cotizacion_nonnegative",
+        ),
+        {"schema": TENANT_SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    proveedor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{TENANT_SCHEMA}.proveedor.id"),
+        nullable=False,
+    )
+
+    producto_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(f"{TENANT_SCHEMA}.producto.id"),
+        nullable=False,
+    )
+
+    precio_cotizacion = Column(
+        Numeric(10, 2),
+        nullable=False,
+    )
+
+    descripcion = Column(Text, nullable=True)
+
+    is_active = Column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("now()"),
+    )

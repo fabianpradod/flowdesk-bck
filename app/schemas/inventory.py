@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 MovementType = Literal[
@@ -30,19 +30,8 @@ ProductAnalyticsSort = Literal[
 class SupplierCreate(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
-    correo: EmailStr | None = Field(default=None, max_length=150)
+    correo: str | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
-
-
-class SupplierUpdate(BaseModel):
-    nombre: str | None = Field(default=None, min_length=1, max_length=100)
-    telefono: str | None = Field(default=None, max_length=20)
-    correo: EmailStr | None = Field(default=None, max_length=150)
-    direccion: str | None = Field(default=None, max_length=200)
-
-
-class SupplierStatusUpdate(BaseModel):
-    is_active: bool
 
 
 class SupplierResponse(BaseModel):
@@ -54,6 +43,48 @@ class SupplierResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class SupplierProductCreate(BaseModel):
+    proveedor_id: UUID
+    producto_id: UUID
+    precio_cotizacion: Decimal = Field(
+        ge=0,
+        decimal_places=2,
+    )
+    descripcion: str | None = Field(
+        default=None,
+        max_length=1000,
+    )
+
+class SupplierProductUpdate(BaseModel):
+    precio_cotizacion: Decimal | None = Field(
+        default=None,
+        ge=0,
+        decimal_places=2,
+    )
+    descripcion: str | None = Field(
+        default=None,
+        max_length=1000,
+    )
+    is_active: bool | None = None
+
+class SupplierProductResponse(BaseModel):
+    supplier_id: UUID
+    supplier_name: str
+    supplier_email: str | None
+    supplier_phone: str | None
+
+    product_id: UUID
+    product_sku: str
+    product_name: str
+    product_description: str | None
+
+    quotation: Decimal
+
+    product_active: bool
+    supplier_active: bool
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -209,3 +240,30 @@ class InventoryHistoryRow(BaseModel):
     cantidad: Decimal
     stock_resultante: Decimal
     motivo: str | None
+
+
+
+
+
+
+
+
+'''
+class SupplierProductResponse(BaseModel):
+    id: UUID
+
+    proveedor_id: UUID
+    proveedor_nombre: str
+
+    producto_id: UUID
+    producto_sku: str
+    producto_nombre: str
+    producto_descripcion: str | None
+
+    precio_cotizacion: Decimal
+    descripcion: str | None
+
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    '''
