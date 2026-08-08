@@ -26,6 +26,8 @@ from app.schemas.inventory import (
     ProductStatusUpdate,
     SupplierCreate,
     SupplierResponse,
+    SupplierStatusUpdate,
+    SupplierUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
@@ -33,11 +35,13 @@ router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
 @router.get("/suppliers", response_model=list[SupplierResponse], summary="Listar proveedores")
 def suppliers(
+    search: str | None = Query(default=None, max_length=100),
+    is_active: bool | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role()),
 ):
-    """Retorna todos los proveedores del esquema de la empresa autenticada."""
-    return inventory_service.list_suppliers(current_user, db)
+    """Retorna los proveedores del esquema de la empresa autenticada. Filtrable por nombre con ?search= y por estado con ?is_active=."""
+    return inventory_service.list_suppliers(current_user, db, search=search, is_active=is_active)
 
 
 @router.post("/suppliers", response_model=SupplierResponse, summary="Crear proveedor")
@@ -46,8 +50,50 @@ def create_supplier(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("manager")),
 ):
-    """Crea un nuevo proveedor en el esquema de la empresa autenticada. Requiere rol manager o superior."""
+    """Crea un nuevo proveedor en el esquema de la empresa autenticada. El nombre no puede repetir el de otro proveedor activo. Requiere rol manager o superior."""
     return inventory_service.create_supplier(data, current_user, db)
+
+
+@router.get("/suppliers/{supplier_id}", response_model=SupplierResponse, summary="Obtener proveedor")
+def supplier(
+    supplier_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role()),
+):
+    """Retorna un proveedor por su id."""
+    return inventory_service.get_supplier(current_user, db, supplier_id)
+
+
+@router.put("/suppliers/{supplier_id}", response_model=SupplierResponse, summary="Actualizar proveedor")
+def update_supplier(
+    supplier_id: UUID,
+    data: SupplierUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager")),
+):
+    """Actualiza los datos de un proveedor. Solo se modifican los campos enviados. Requiere rol manager o superior."""
+    return inventory_service.update_supplier(data, current_user, db, supplier_id)
+
+
+@router.patch("/suppliers/{supplier_id}/status", response_model=SupplierResponse, summary="Actualizar estado de proveedor")
+def update_supplier_status(
+    supplier_id: UUID,
+    data: SupplierStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Activa o desactiva un proveedor. No se puede desactivar si aún tiene productos activos asociados. Requiere rol admin o superior."""
+    return inventory_service.update_supplier_status(current_user, db, supplier_id, data.is_active)
+
+
+@router.delete("/suppliers/{supplier_id}", status_code=204, summary="Eliminar proveedor")
+def delete_supplier(
+    supplier_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    """Soft delete — desactiva el proveedor sin eliminar el registro. No se puede eliminar si aún tiene productos activos asociados. Requiere rol admin o superior."""
+    inventory_service.delete_supplier(current_user, db, supplier_id)
 
 
 @router.get("/products", response_model=list[ProductResponse], summary="Listar productos")

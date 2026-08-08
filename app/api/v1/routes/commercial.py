@@ -1,0 +1,84 @@
+from uuid import UUID
+
+import app.services.commercial as commercial_service
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from app.api.dependencies.auth import get_current_user, get_db, require_role
+from app.models.users import User
+from app.schemas.commercial import (
+    ClientCreate,
+    ClientResponse,
+    ClientStatusUpdate,
+    ClientUpdate,
+)
+
+router = APIRouter(prefix="/api/v1/commercial", tags=["commercial"])
+
+
+@router.get("/clients", response_model=list[ClientResponse], summary="Listar clientes")
+def clients(
+    search: str | None = Query(default=None),
+    active_only: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retorna los clientes del esquema de la empresa autenticada. Permite buscar por nombre, correo o teléfono."""
+    return commercial_service.list_clients(
+        current_user,
+        db,
+        search=search,
+        active_only=active_only,
+    )
+
+
+@router.get("/clients/{client_id}", response_model=ClientResponse, summary="Obtener cliente")
+def client_detail(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retorna un cliente por id dentro del esquema de la empresa autenticada."""
+    return commercial_service.get_client(client_id, current_user, db)
+
+
+@router.post("/clients", response_model=ClientResponse, summary="Crear cliente")
+def create_client(
+    data: ClientCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager")),
+):
+    """Crea un cliente en el esquema de la empresa autenticada. Requiere rol manager o superior."""
+    return commercial_service.create_client(data, current_user, db)
+
+
+@router.put("/clients/{client_id}", response_model=ClientResponse, summary="Actualizar cliente")
+def update_client(
+    client_id: UUID,
+    data: ClientUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager")),
+):
+    """Actualiza los datos de un cliente del esquema de la empresa autenticada. Requiere rol manager o superior."""
+    return commercial_service.update_client(client_id, data, current_user, db)
+
+
+@router.patch("/clients/{client_id}/status", response_model=ClientResponse, summary="Actualizar estado de cliente")
+def update_client_status(
+    client_id: UUID,
+    data: ClientStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager")),
+):
+    """Activa o desactiva un cliente sin eliminar su registro. Requiere rol manager o superior."""
+    return commercial_service.update_client_status(client_id, data.is_active, current_user, db)
+
+
+@router.delete("/clients/{client_id}", status_code=204, summary="Eliminar cliente")
+def delete_client(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager")),
+):
+    """Desactiva un cliente del esquema de la empresa autenticada. Requiere rol manager o superior."""
+    commercial_service.delete_client(client_id, current_user, db)
