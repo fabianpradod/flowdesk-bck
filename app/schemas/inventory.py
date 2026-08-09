@@ -240,30 +240,3 @@ class InventoryHistoryRow(BaseModel):
     cantidad: Decimal
     stock_resultante: Decimal
     motivo: str | None
-
-
-
-
-
-
-
-
-'''
-class SupplierProductResponse(BaseModel):
-    id: UUID
-
-    proveedor_id: UUID
-    proveedor_nombre: str
-
-    producto_id: UUID
-    producto_sku: str
-    producto_nombre: str
-    producto_descripcion: str | None
-
-    precio_cotizacion: Decimal
-    descripcion: str | None
-
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-    '''
