@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 from app.models.tenant.base import Base, TENANT_SCHEMA
 from app.models.tenant.commercial import Cliente, DetalleVenta, Venta
-from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor
+from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor, ProveedorProducto
 from app.models.tenant.operations import Reporte, Tarea
 from app.models.companies import Company
 from app.models.roles import Role
@@ -72,9 +72,12 @@ def test_generate_schema_name_uses_prefixed_uuid_hex():
 def test_build_tenant_metadata_contains_expected_tables():
     schema_name = "tenant_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     metadata = build_tenant_metadata(schema_name)
+    table_names = get_tenant_table_names()
+
     expected_table_names = {
         "proveedor",
         "producto",
+        "proveedor_producto",
         "movimiento_inventario",
         "alerta",
         "cliente",
@@ -85,6 +88,7 @@ def test_build_tenant_metadata_contains_expected_tables():
     }
     tenant_models = {
         Proveedor,
+        ProveedorProducto,
         Producto,
         MovimientoInventario,
         Alerta,
@@ -95,23 +99,49 @@ def test_build_tenant_metadata_contains_expected_tables():
         Reporte,
     }
 
-    table_names = get_tenant_table_names()
     assert set(table_names) == expected_table_names
     assert len(table_names) == len(expected_table_names)
+
     for model in tenant_models:
         assert issubclass(model, Base)
         assert model.__tablename__ in expected_table_names
         assert model.__table__.schema == TENANT_SCHEMA
 
     assert set(metadata.tables.keys()) == (
-        {f"{schema_name}.{table_name}" for table_name in expected_table_names}
+        {
+            f"{schema_name}.{table_name}"
+            for table_name in expected_table_names
+        }
         | {"global.users"}
+    )
+
+    supplier_product_table = metadata.tables[
+        f"{schema_name}.proveedor_producto"
+    ]
+
+    fk_targets = {
+        fk.target_fullname
+        for fk in supplier_product_table.foreign_keys
+    }
+
+    assert f"{schema_name}.proveedor.id" in fk_targets
+    assert f"{schema_name}.producto.id" in fk_targets
+
+    assert (
+        table_names.index("proveedor")
+        < table_names.index("proveedor_producto")
+    )
+
+    assert (
+        table_names.index("producto")
+        < table_names.index("proveedor_producto")
     )
 
     movement_table = metadata.tables[f"{schema_name}.movimiento_inventario"]
     fk_targets = {fk.target_fullname for fk in movement_table.foreign_keys}
     assert f"{schema_name}.producto.id" in fk_targets
     assert "global.users.id" in fk_targets
+
     assert f"{schema_name}.usuario" not in metadata.tables
     assert f"{schema_name}.rol" not in metadata.tables
     assert f"{schema_name}.warehouse" not in metadata.tables

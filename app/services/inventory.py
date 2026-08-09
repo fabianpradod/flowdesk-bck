@@ -8,7 +8,7 @@ from uuid import UUID
 from uuid import uuid4
 from xml.etree import ElementTree
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, select, update, delete
 from sqlalchemy.orm import Session
 
 from app.models.users import User
@@ -20,6 +20,7 @@ from app.schemas.inventory import (
     ProductAnalyticsSort,
     ProductCreate,
     SupplierCreate,
+    SupplierProductCreate,
     SupplierUpdate,
 )
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
@@ -275,6 +276,277 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
     ).mappings().one()
     return dict(row)
 
+def _supplier_products_tables(current_user: User):
+    tables = _get_tenant_tables_for_user(current_user)
+
+    return (
+        tables["proveedor_producto"],
+        tables["proveedor"],
+        tables["producto"],
+    )
+
+
+def create_supplier_product(
+    data: SupplierProductCreate,
+    current_user: User,
+    db: Session,
+) -> dict:
+    supplier_products, suppliers, products = _supplier_products_tables(current_user)
+
+    supplier = db.execute(
+        select(suppliers).where(
+            suppliers.c.id == data.proveedor_id
+        )
+    ).mappings().first()
+
+    if supplier is None:
+        raise AppError(
+            status_code=404,
+            message="Supplier not found",
+        )
+
+    product = db.execute(
+        select(products).where(
+            products.c.id == data.producto_id
+        )
+    ).mappings().first()
+
+    if product is None:
+        raise AppError(
+            status_code=404,
+            message="Product not found",
+        )
+
+    existing = db.execute(
+        select(supplier_products.c.id).where(
+            supplier_products.c.proveedor_id == data.proveedor_id,
+            supplier_products.c.producto_id == data.producto_id,
+        )
+    ).first()
+
+    if existing:
+        raise AppError(
+            status_code=400,
+            message="Supplier product relationship already exists",
+        )
+
+    relationship_id = uuid4()
+    now = _utcnow()
+
+    try:
+        db.execute(
+            insert(supplier_products).values(
+                id=relationship_id,
+                proveedor_id=data.proveedor_id,
+                producto_id=data.producto_id,
+                precio_cotizacion=data.precio_cotizacion,
+                descripcion=data.descripcion,
+                is_active=True,
+                updated_at=now,
+            )
+        )
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message=f"Failed to create supplier product: {str(e)}",
+        )
+
+    created = db.execute(
+        select(supplier_products).where(
+            supplier_products.c.id == relationship_id
+        )
+    ).mappings().one()
+
+    return dict(created)
+
+
+def get_supplier_product(
+    current_user: User,
+    db: Session,
+    supplier_product_id: UUID,
+) -> dict:
+    supplier_products, _, _ = _supplier_products_tables(current_user)
+
+    relationship = db.execute(
+        select(supplier_products).where(
+            supplier_products.c.id == supplier_product_id
+        )
+    ).mappings().first()
+
+    if relationship is None:
+        raise AppError(
+            status_code=404,
+            message="Supplier product not found",
+        )
+
+    return dict(relationship)
+
+
+def list_supplier_products(
+    current_user: User,
+    db: Session,
+    *,
+    proveedor_id: UUID | None = None,
+    producto_id: UUID | None = None,
+    search: str | None = None,
+    active_only: bool = True,
+) -> list[dict]:
+    supplier_products, suppliers, products = _supplier_products_tables(
+        current_user
+    )
+
+    query = (
+        select(supplier_products)
+        .select_from(
+            supplier_products
+            .join(
+                suppliers,
+                supplier_products.c.proveedor_id == suppliers.c.id,
+            )
+            .join(
+                products,
+                supplier_products.c.producto_id == products.c.id,
+            )
+        )
+    )
+
+    if proveedor_id is not None:
+        query = query.where(
+            supplier_products.c.proveedor_id == proveedor_id
+        )
+
+    if producto_id is not None:
+        query = query.where(
+            supplier_products.c.producto_id == producto_id
+        )
+
+    if active_only:
+        query = query.where(
+            supplier_products.c.is_active.is_(True)
+        )
+
+    if search:
+        search_pattern = f"%{search.strip()}%"
+
+        query = query.where(
+            suppliers.c.nombre.ilike(search_pattern)
+            | products.c.nombre.ilike(search_pattern)
+        )
+
+    query = query.order_by(supplier_products.c.created_at.desc())
+
+    rows = db.execute(query).mappings()
+
+    return [dict(row) for row in rows]
+
+
+def update_supplier_product(
+    data: SupplierProductUpdate,
+    current_user: User,
+    db: Session,
+    supplier_product_id: UUID,
+) -> dict:
+    supplier_products, _, _ = _supplier_products_tables(current_user)
+
+    existing = db.execute(
+        select(supplier_products).where(
+            supplier_products.c.id == supplier_product_id
+        )
+    ).mappings().first()
+
+    if existing is None:
+        raise AppError(
+            status_code=404,
+            message="Supplier product not found",
+        )
+
+    values = data.model_dump(exclude_unset=True)
+
+    if not values:
+        raise AppError(
+            status_code=400,
+            message="No fields provided for update",
+        )
+
+    values.pop("proveedor_id", None)
+    values.pop("producto_id", None)
+
+    if not values:
+        raise AppError(
+            status_code=400,
+            message="No fields provided for update",
+        )
+
+    values["updated_at"] = _utcnow()
+
+    try:
+        db.execute(
+            update(supplier_products)
+            .where(supplier_products.c.id == supplier_product_id)
+            .values(**values)
+        )
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message=f"Failed to update supplier product: {str(e)}",
+        )
+
+    updated = db.execute(
+        select(supplier_products).where(
+            supplier_products.c.id == supplier_product_id
+        )
+    ).mappings().one()
+
+    return dict(updated)
+
+
+def delete_supplier_product(
+    current_user: User,
+    db: Session,
+    supplier_product_id: UUID,
+) -> None:
+    supplier_products, _, _ = _supplier_products_tables(current_user)
+
+    existing = db.execute(
+        select(supplier_products).where(
+            supplier_products.c.id == supplier_product_id
+        )
+    ).mappings().first()
+
+    if existing is None:
+        raise AppError(
+            status_code=404,
+            message="Supplier product not found",
+        )
+
+    try:
+        db.execute(
+            update(supplier_products)
+            .where(supplier_products.c.id == supplier_product_id)
+            .values(
+                is_active=False,
+                updated_at=_utcnow(),
+            )
+        )
+
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message=f"Failed to delete supplier product: {str(e)}",
+        )
+
+    return None
 
 def import_products_from_file(filename: str, content: bytes, current_user: User, db: Session) -> dict:
     rows = parse_product_import_file(filename, content)
