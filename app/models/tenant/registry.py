@@ -10,8 +10,8 @@ from app.models.tenant.operations import Reporte, Tarea
 TENANT_MODELS = (
     Proveedor,
     ProveedorProducto,
-    Cliente,
     Producto,
+    Cliente,
     Venta,
     DetalleVenta,
     Tarea,
