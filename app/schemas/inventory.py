@@ -33,6 +33,14 @@ class SupplierCreate(BaseModel):
     correo: str | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
+class SupplierUpdate(BaseModel):
+    nombre: str | None = Field(default=None, min_length=1, max_length=100)
+    telefono: str | None = Field(default=None, max_length=20)
+    correo: str | None = Field(default=None, max_length=150)
+    direccion: str | None = Field(default=None, max_length=200)
+
+class SupplierStatusUpdate(BaseModel):
+    is_active: bool
 
 class SupplierResponse(BaseModel):
     id: UUID
@@ -214,8 +222,6 @@ class ProductAnalyticsResponse(BaseModel):
     start_date: date
     end_date: date
     products: list[ProductAnalyticsRow]
-
-
 
 
 class InventoryMetricsResponse(BaseModel):
