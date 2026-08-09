@@ -20,8 +20,9 @@ from app.schemas.inventory import (
     ProductAnalyticsSort,
     ProductCreate,
     SupplierCreate,
-    SupplierProductCreate,
     SupplierUpdate,
+    SupplierProductCreate,
+    SupplierProductUpdate,
 )
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError, ProductImportError
@@ -285,17 +286,13 @@ def _supplier_products_tables(current_user: User):
         tables["producto"],
     )
 
-
-def create_supplier_product(
-    data: SupplierProductCreate,
-    current_user: User,
-    db: Session,
-) -> dict:
+def create_supplier_product(data: SupplierProductCreate, current_user: User, db: Session,) -> dict:
     supplier_products, suppliers, products = _supplier_products_tables(current_user)
 
     supplier = db.execute(
         select(suppliers).where(
-            suppliers.c.id == data.proveedor_id
+            suppliers.c.id == data.proveedor_id,
+            suppliers.c.is_active.is_(True),
         )
     ).mappings().first()
 
@@ -307,7 +304,8 @@ def create_supplier_product(
 
     product = db.execute(
         select(products).where(
-            products.c.id == data.producto_id
+            products.c.id == data.producto_id,
+            products.c.is_active.is_(True),
         )
     ).mappings().first()
 
@@ -321,6 +319,7 @@ def create_supplier_product(
         select(supplier_products.c.id).where(
             supplier_products.c.proveedor_id == data.proveedor_id,
             supplier_products.c.producto_id == data.producto_id,
+            supplier_products.c.is_active.is_(True),
         )
     ).first()
 
@@ -334,8 +333,9 @@ def create_supplier_product(
     now = _utcnow()
 
     try:
-        db.execute(
-            insert(supplier_products).values(
+        result = db.execute(
+            insert(supplier_products)
+            .values(
                 id=relationship_id,
                 proveedor_id=data.proveedor_id,
                 producto_id=data.producto_id,
@@ -344,7 +344,8 @@ def create_supplier_product(
                 is_active=True,
                 updated_at=now,
             )
-        )
+            .returning(supplier_products)
+        ).mappings().one()
 
         db.commit()
 
@@ -355,13 +356,7 @@ def create_supplier_product(
             message=f"Failed to create supplier product: {str(e)}",
         )
 
-    created = db.execute(
-        select(supplier_products).where(
-            supplier_products.c.id == relationship_id
-        )
-    ).mappings().one()
-
-    return dict(created)
+    return dict(result)
 
 
 def get_supplier_product(
@@ -444,12 +439,7 @@ def list_supplier_products(
     return [dict(row) for row in rows]
 
 
-def update_supplier_product(
-    data: SupplierProductUpdate,
-    current_user: User,
-    db: Session,
-    supplier_product_id: UUID,
-) -> dict:
+def update_supplier_product(data: SupplierProductUpdate, current_user: User, db: Session, supplier_product_id: UUID,) -> dict:
     supplier_products, _, _ = _supplier_products_tables(current_user)
 
     existing = db.execute(
@@ -484,11 +474,12 @@ def update_supplier_product(
     values["updated_at"] = _utcnow()
 
     try:
-        db.execute(
+        result = db.execute(
             update(supplier_products)
             .where(supplier_products.c.id == supplier_product_id)
             .values(**values)
-        )
+            .returning(supplier_products)
+        ).mappings().one()
 
         db.commit()
 
@@ -499,13 +490,7 @@ def update_supplier_product(
             message=f"Failed to update supplier product: {str(e)}",
         )
 
-    updated = db.execute(
-        select(supplier_products).where(
-            supplier_products.c.id == supplier_product_id
-        )
-    ).mappings().one()
-
-    return dict(updated)
+    return dict(result)
 
 
 def delete_supplier_product(

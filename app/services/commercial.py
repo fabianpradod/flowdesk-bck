@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from app.services.inventory import _utcnow
 from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,13 +50,16 @@ def create_client(data: ClientCreate, current_user, db: Session) -> dict:
     now = _utcnow()
     client_id = uuid4()
     try:
-        db.execute(
-            insert(clients).values(
+        result = db.execute(
+            insert(clients)
+            .values(
                 id=client_id,
                 **payload,
                 updated_at=now,
             )
-        )
+            .returning(clients)
+        ).mappings().one()
+
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
@@ -71,7 +75,7 @@ def create_client(data: ClientCreate, current_user, db: Session) -> dict:
             message="Server error while creating client",
         ) from exc
 
-    return get_client(client_id, current_user, db)
+    return dict(result)
 
 
 def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session) -> dict:
@@ -85,11 +89,16 @@ def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session
         _ensure_email_available(db, clients, payload.get("correo"), exclude_client_id=client_id)
 
     try:
-        db.execute(
+        result = db.execute(
             update(clients)
             .where(clients.c.id == client_id)
-            .values(**payload, updated_at=_utcnow())
-        )
+            .values(
+                **payload,
+                updated_at=_utcnow(),
+            )
+            .returning(clients)
+        ).mappings().one()
+
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
@@ -104,33 +113,50 @@ def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session
             message="Server error while updating client",
         ) from exc
 
-    return get_client(client_id, current_user, db)
+    return dict(result)
 
 
-def update_client_status(client_id: UUID, is_active: bool, current_user, db: Session) -> dict:
+def update_client_status(client_id: UUID, is_active: bool, current_user, db: Session,) -> dict:
     clients = _clients_table(current_user)
-    current = db.execute(select(clients).where(clients.c.id == client_id)).mappings().first()
+
+    current = db.execute(
+        select(clients).where(
+            clients.c.id == client_id
+        )
+    ).mappings().first()
 
     if current is None:
-        raise AppError(status_code=404, message="Client not found",)
+        raise AppError(
+            status_code=404,
+            message="Client not found",
+        )
 
     if current["is_active"] == is_active:
-        raise AppError(status_code=400, message="Client already has this status",)
+        raise AppError(
+            status_code=400,
+            message="Client already has this status",
+        )
 
-    _ensure_client_exists(db, clients, client_id)
     try:
-        db.execute(
+        result = db.execute(
             update(clients)
             .where(clients.c.id == client_id)
-            .values(is_active=is_active, updated_at=_utcnow())
-        )
+            .values(
+                is_active=is_active,
+                updated_at=_utcnow(),
+            )
+            .returning(clients)
+        ).mappings().one()
+
         db.commit()
+
     except SQLAlchemyError as exc:
         db.rollback()
         raise AppError(
             status_code=500,
             message="Database error while updating client status",
         ) from exc
+
     except Exception as exc:
         db.rollback()
         raise AppError(
@@ -138,7 +164,7 @@ def update_client_status(client_id: UUID, is_active: bool, current_user, db: Ses
             message="Server error while updating client status",
         ) from exc
 
-    return get_client(client_id, current_user, db)
+    return dict(result)
 
 
 def delete_client(client_id: UUID, current_user, db: Session) -> None:
