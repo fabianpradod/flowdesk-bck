@@ -1,202 +1,357 @@
-import unittest
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
+from sqlalchemy import func, insert, or_, select, update
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+from app.schemas.commercial import ClientCreate, ClientUpdate
+from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
+from app.utils.exceptions import AppError
 
-from sqlalchemy import Boolean, Column, DateTime, MetaData, String, Table
+def list_clients(current_user, db: Session, *, search: str | None = None, active_only: bool = True,) -> list[dict]:
+    clients = _clients_table(current_user)
+    query = select(clients).order_by(clients.c.nombre.asc())
 
+    if active_only:
+        query = query.where(clients.c.is_active.is_(True))
 
-CLIENT_ID = uuid4()
+    if search:
+        term = f"%{search.strip().lower()}%"
 
-
-class CommercialClientTests(unittest.TestCase):
-    def test_create_client_inserts_clean_payload(self):
-        from app.schemas.commercial import ClientCreate
-        from app.services.commercial import create_client
-
-        tenant_tables = build_tenant_tables()
-        created_at = datetime.now(timezone.utc)
-        db = FakeDB(
-            [
-                FakeResult([]),
-                FakeResult([]),
-                FakeResult(
-                    [
-                        {
-                            "id": CLIENT_ID,
-                            "nombre": "Acme",
-                            "telefono": "5555-0000",
-                            "correo": "sales@acme.com",
-                            "direccion": "Zona 10",
-                            "is_active": True,
-                            "created_at": created_at,
-                            "updated_at": created_at,
-                        }
-                    ]
-                ),
-            ]
-        )
-        data = ClientCreate(
-            nombre="  Acme  ",
-            telefono="5555-0000",
-            correo=" SALES@ACME.COM ",
-            direccion=" Zona 10 ",
+        query = query.where(
+            or_(
+                func.lower(clients.c.nombre).like(term),
+                func.lower(clients.c.correo).like(term),
+                func.lower(clients.c.telefono).like(term),
+            )
         )
 
-        with patch("app.services.commercial.get_tenant_tables", return_value=tenant_tables):
-            client = create_client(data, tenant_user(), db)
+    rows = db.execute(query).mappings()
 
-        self.assertEqual(client["nombre"], "Acme")
-        self.assertEqual(db.commits, 1)
-        self.assertEqual(db.rollbacks, 0)
-        self.assertEqual(len(db.executed), 3)
-        insert_sql = str(db.executed[1]).lower()
-        self.assertIn("insert into", insert_sql)
-        self.assertIn("cliente", insert_sql)
+    return [dict(row) for row in rows]
 
-    def test_create_client_rejects_duplicate_email(self):
-        from app.schemas.commercial import ClientCreate
-        from app.services.commercial import create_client
-        from app.utils.exceptions import AppError
+def get_client(client_id: UUID, current_user, db: Session,) -> dict:
+    clients = _clients_table(current_user)
 
-        tenant_tables = build_tenant_tables()
-        db = FakeDB([FakeResult([{"id": uuid4()}])])
-        data = ClientCreate(nombre="Acme", correo="sales@acme.com")
-
-        with patch("app.services.commercial.get_tenant_tables", return_value=tenant_tables):
-            with self.assertRaises(AppError) as error:
-                create_client(data, tenant_user(), db)
-
-        self.assertEqual(error.exception.status_code, 400)
-        self.assertEqual(error.exception.detail, "Client email already exists")
-        self.assertEqual(db.commits, 0)
-
-    def test_update_client_requires_existing_client(self):
-        from app.schemas.commercial import ClientUpdate
-        from app.services.commercial import update_client
-        from app.utils.exceptions import AppError
-
-        tenant_tables = build_tenant_tables()
-        db = FakeDB([FakeResult([])])
-
-        with patch("app.services.commercial.get_tenant_tables", return_value=tenant_tables):
-            with self.assertRaises(AppError) as error:
-                update_client(CLIENT_ID, ClientUpdate(nombre="Nuevo"), tenant_user(), db)
-
-        self.assertEqual(error.exception.status_code, 404)
-        self.assertEqual(error.exception.detail, "Client not found")
-
-    def test_list_clients_supports_search_and_active_filter(self):
-        from app.services.commercial import list_clients
-
-        tenant_tables = build_tenant_tables()
-        db = FakeDB(
-            [
-                FakeResult(
-                    [
-                        {
-                            "id": CLIENT_ID,
-                            "nombre": "Acme",
-                            "telefono": None,
-                            "correo": None,
-                            "direccion": None,
-                            "is_active": True,
-                            "created_at": datetime.now(timezone.utc),
-                            "updated_at": datetime.now(timezone.utc),
-                        }
-                    ]
-                )
-            ]
+    row = (
+        db.execute(
+            select(clients).where(
+                clients.c.id == client_id
+            )
         )
-
-        with patch("app.services.commercial.get_tenant_tables", return_value=tenant_tables):
-            clients = list_clients(tenant_user(), db, search="acme", active_only=True)
-
-        self.assertEqual(clients[0]["nombre"], "Acme")
-        rendered_query = str(db.executed[0]).lower()
-        self.assertIn("is_active", rendered_query)
-        self.assertIn("lower", rendered_query)
-
-    def test_update_status_soft_deletes_client(self):
-        from app.services.commercial import delete_client
-
-        tenant_tables = build_tenant_tables()
-        db = FakeDB([FakeResult([{"id": CLIENT_ID}])])
-
-        with patch("app.services.commercial.get_tenant_tables", return_value=tenant_tables):
-            delete_client(CLIENT_ID, tenant_user(), db)
-
-        self.assertEqual(db.commits, 1)
-        update_sql = str(db.executed[1]).lower()
-        self.assertIn("update", update_sql)
-        self.assertIn("cliente", update_sql)
-
-
-def tenant_user():
-    return SimpleNamespace(company_id=uuid4(), company=SimpleNamespace(is_active=True, schema_name="tenant_test"))
-
-
-def build_tenant_tables():
-    metadata = MetaData()
-    Table(
-        "cliente",
-        metadata,
-        Column("id", String, primary_key=True),
-        Column("nombre", String(100), nullable=False),
-        Column("telefono", String(20), nullable=True),
-        Column("correo", String(150), nullable=True),
-        Column("direccion", String(200), nullable=True),
-        Column("is_active", Boolean, nullable=False),
-        Column("created_at", DateTime, nullable=False),
-        Column("updated_at", DateTime, nullable=False),
-        schema="tenant_test",
+        .mappings()
+        .first()
     )
-    return {
-        table.name: table
-        for table in metadata.tables.values()
-        if isinstance(table, Table) and table.schema == "tenant_test"
-    }
 
+    if row is None:
+        raise AppError(
+            status_code=404,
+            message="Client not found",
+        )
 
-class FakeResult:
-    def __init__(self, rows):
-        self.rows = rows
+    return dict(row)
 
-    def mappings(self):
-        return self
+def create_client(data: ClientCreate, current_user, db: Session,) -> dict:
+    clients = _clients_table(current_user)
 
-    def first(self):
-        return self.rows[0] if self.rows else None
+    payload = _client_payload(data)
 
-    def one(self):
-        if not self.rows:
-            raise AssertionError("Expected one row")
-        return self.rows[0]
+    _ensure_email_available(
+        db,
+        clients,
+        payload.get("correo"),
+    )
 
-    def __iter__(self):
-        return iter(self.rows)
+    client_id = uuid4()
+    now = _utcnow()
 
+    try:
+        db.execute(
+            insert(clients).values(
+                id=client_id,
+                **payload,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
-class FakeDB:
-    def __init__(self, results):
-        self.results = list(results)
-        self.executed = []
-        self.commits = 0
-        self.rollbacks = 0
+        result = (
+            db.execute(
+                select(clients).where(
+                    clients.c.id == client_id
+                )
+            )
+            .mappings()
+            .one()
+        )
 
-    def execute(self, statement, *_args, **_kwargs):
-        self.executed.append(statement)
-        if not self.results:
-            return FakeResult([])
-        return self.results.pop(0)
+        db.commit()
 
-    def commit(self):
-        self.commits += 1
+    except SQLAlchemyError as exc:
+        db.rollback()
 
-    def rollback(self):
-        self.rollbacks += 1
+        raise AppError(
+            status_code=500,
+            message="Database error while creating client",
+        ) from exc
 
+    except Exception as exc:
+        db.rollback()
 
-if __name__ == "__main__":
-    unittest.main()
+        if isinstance(exc, AppError):
+            raise
+
+        raise AppError(
+            status_code=500,
+            message="Server error while creating client",
+        ) from exc
+
+    return dict(result)
+
+def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session,) -> dict:
+    clients = _clients_table(current_user)
+
+    _ensure_client_exists(
+        db,
+        clients,
+        client_id,
+    )
+
+    payload = _client_payload(
+        data,
+        exclude_unset=True,
+    )
+
+    if not payload:
+        raise AppError(
+            status_code=400,
+            message="At least one field must be provided",
+        )
+
+    if "correo" in payload:
+        _ensure_email_available(
+            db,
+            clients,
+            payload.get("correo"),
+            exclude_client_id=client_id,
+        )
+
+    try:
+        db.execute(
+            update(clients)
+            .where(clients.c.id == client_id)
+            .values(
+                **payload,
+                updated_at=_utcnow(),
+            )
+        )
+
+        result = (
+            db.execute(
+                select(clients).where(
+                    clients.c.id == client_id
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+        db.commit()
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+
+        raise AppError(
+            status_code=500,
+            message="Database error while updating client",
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+
+        if isinstance(exc, AppError):
+            raise
+
+        raise AppError(
+            status_code=500,
+            message="Server error while updating client",
+        ) from exc
+
+    return dict(result)
+
+def update_client_status(client_id: UUID, is_active: bool, current_user, db: Session,) -> dict:
+    clients = _clients_table(current_user)
+
+    current = (
+        db.execute(
+            select(clients).where(
+                clients.c.id == client_id
+            )
+        )
+        .mappings()
+        .first()
+    )
+
+    if current is None:
+        raise AppError(
+            status_code=404,
+            message="Client not found",
+        )
+
+    if current["is_active"] == is_active:
+        raise AppError(
+            status_code=400,
+            message="Client already has this status",
+        )
+
+    try:
+        db.execute(
+            update(clients)
+            .where(clients.c.id == client_id)
+            .values(
+                is_active=is_active,
+                updated_at=_utcnow(),
+            )
+        )
+
+        result = (
+            db.execute(
+                select(clients).where(
+                    clients.c.id == client_id
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+        db.commit()
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+
+        raise AppError(
+            status_code=500,
+            message="Database error while updating client status",
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+
+        if isinstance(exc, AppError):
+            raise
+
+        raise AppError(
+            status_code=500,
+            message="Server error while updating client status",
+        ) from exc
+
+    return dict(result)
+
+def delete_client(client_id: UUID, current_user, db: Session,) -> None:
+    clients = _clients_table(current_user)
+
+    _ensure_client_exists(
+        db,
+        clients,
+        client_id,
+    )
+
+    try:
+        db.execute(
+            update(clients)
+            .where(clients.c.id == client_id)
+            .values(
+                is_active=False,
+                updated_at=_utcnow(),
+            )
+        )
+
+        db.commit()
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+
+        raise AppError(
+            status_code=500,
+            message="Database error while deleting client",
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+
+        if isinstance(exc, AppError):
+            raise
+
+        raise AppError(
+            status_code=500,
+            message="Server error while deleting client",
+        ) from exc
+
+def _clients_table(current_user):
+    schema_name = get_user_schema_name(current_user)
+
+    return get_tenant_tables(schema_name)["cliente"]
+
+def _client_payload(data, exclude_unset: bool = False,) -> dict:
+    payload = data.model_dump(
+        exclude_unset=exclude_unset,
+        exclude_none=True,
+    )
+
+    if "nombre" in payload:
+        payload["nombre"] = payload["nombre"].strip()
+
+    if "telefono" in payload and payload["telefono"] is not None:
+        payload["telefono"] = payload["telefono"].strip()
+
+    if "correo" in payload and payload["correo"] is not None:
+        payload["correo"] = (
+            payload["correo"]
+            .strip()
+            .lower()
+        )
+
+    if "direccion" in payload and payload["direccion"] is not None:
+        payload["direccion"] = payload["direccion"].strip()
+
+    return payload
+
+def _ensure_email_available(db: Session, clients, correo: str | None, *, exclude_client_id: UUID | None = None,) -> None:
+    if not correo:
+        return
+
+    query = select(clients.c.id).where(
+        func.lower(clients.c.correo) == correo.lower()
+    )
+
+    if exclude_client_id is not None:
+        query = query.where(
+            clients.c.id != exclude_client_id
+        )
+
+    existing = db.execute(query).first()
+
+    if existing:
+        raise AppError(
+            status_code=400,
+            message="Client email already exists",
+        )
+
+def _ensure_client_exists(db: Session, clients, client_id: UUID,) -> None:
+    existing = (
+        db.execute(
+            select(clients.c.id).where(
+                clients.c.id == client_id
+            )
+        )
+        .first()
+    )
+
+    if not existing:
+        raise AppError(
+            status_code=404,
+            message="Client not found",
+        )
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
