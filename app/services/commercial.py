@@ -196,16 +196,24 @@ def _clients_table(current_user):
     return get_tenant_tables(schema_name)["cliente"]
 
 
-def _client_payload(data, *, exclude_unset: bool = False) -> dict:
-    raw = data.model_dump(exclude_unset=exclude_unset)
-    payload = {}
-    for key, value in raw.items():
-        if value is None:
-            payload[key] = None
-        elif key == "correo":
-            payload[key] = str(value).strip().lower()
-        else:
-            payload[key] = str(value).strip()
+def _client_payload(data, exclude_unset: bool = False) -> dict:
+    payload = data.model_dump(
+        exclude_unset=exclude_unset,
+        exclude_none=True,
+    )
+
+    if "nombre" in payload:
+        payload["nombre"] = payload["nombre"].strip()
+
+    if "telefono" in payload and payload["telefono"] is not None:
+        payload["telefono"] = payload["telefono"].strip()
+
+    if "correo" in payload and payload["correo"] is not None:
+        payload["correo"] = payload["correo"].strip().lower()
+
+    if "direccion" in payload and payload["direccion"] is not None:
+        payload["direccion"] = payload["direccion"].strip()
+
     return payload
 
 

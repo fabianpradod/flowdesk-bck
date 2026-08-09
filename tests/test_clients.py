@@ -120,12 +120,13 @@ def test_create_client_persists_and_returns_client():
     assert result == created
     assert db.commits == 1
 
-    statement = db.statements[0]
-
+    statement = db.statements[1]
     params = statement.compile().params
 
     assert params["nombre"] == "Cliente Demo"
+    assert params["telefono"] == "5555-0101"
     assert params["correo"] == "cliente@example.com"
+    assert params["direccion"] == "Zona 1"
 
 def test_get_client_returns_client():
     client = make_client()
@@ -289,7 +290,7 @@ def test_update_client_normalizes_email():
         db,
     )
 
-    params = db.statements[1].compile().params
+    params = db.statements[2].compile().params
 
     assert params["correo"] == "new@example.com"
 
