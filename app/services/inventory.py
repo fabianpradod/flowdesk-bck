@@ -266,8 +266,10 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
             nombre=data.nombre.strip(),
             descripcion=data.descripcion,
             precio_venta=data.precio_venta,
+            stock_actual=Decimal("0"),
             stock_minimo=data.stock_minimo,
             unidad_medida=data.unidad_medida.strip(),
+            is_active=True,
             updated_at=now,
         )
     )

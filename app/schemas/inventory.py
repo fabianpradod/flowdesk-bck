@@ -1,11 +1,21 @@
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
+class MovementType(str, Enum):
+    ENTRADA_COMPRAS = "entrada_compra"
+    ENTRADA_MANUAL = "entrada_manual"
+    AJUSTE_POSITIVO = "ajuste_positivo"
+    DEVOLUCION_CLIENTE = "devolucion_cliente"
+    SALIDA_VENTA = "salida_venta"
+    SALIDA_MANUAL = "salida_manual"
+    AJUSTE_NEGATIVO = "ajuste_negativo"
+    DEVOLUCION_PROVEEDOR = "devolucion_proveedor"
+'''
 MovementType = Literal[
     "entrada_compra",
     "entrada_manual",
@@ -16,6 +26,7 @@ MovementType = Literal[
     "ajuste_negativo",
     "devolucion_proveedor",
 ]
+'''
 AnalyticsPeriod = Literal["7d", "30d", "90d", "6m", "12m", "ytd", "custom"]
 AnalyticsWindow = Literal["day", "week", "month"]
 ProductAnalyticsSort = Literal[

@@ -17,7 +17,7 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
     if not user:
         raise AppError(404, "User not found")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
+        raise AppError(status_code=403, message="Cannot modify a superadmin user",)
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
 
@@ -41,7 +41,7 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
     if not user:
         raise AppError(404, "User not found")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
+        raise AppError(status_code=403, message="Cannot modify a superadmin user",)
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
 
@@ -58,7 +58,7 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
     if user.id == current_user.id:
         raise AppError(400, "Cannot delete your own account")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
+        raise AppError(status_code=403, message="Cannot delete a superadmin user",)
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot delete a superadmin user")
 

@@ -2,9 +2,26 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import Boolean, DateTime, MetaData, Numeric, String, Table, create_engine, insert, select
 from sqlalchemy.orm import Session, sessionmaker
-from app.schemas.commercial import ClientCreate, ClientUpdate
+from sqlalchemy.types import TypeDecorator
 from app.services import commercial as commercial_service
 from app.utils.exceptions import AppError
+from app.schemas.commercial import ClientCreate, ClientUpdate
+
+class UUIDString(TypeDecorator):
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+
+        return str(value)
 
 @pytest.fixture
 def commercial_db(monkeypatch):
@@ -20,7 +37,7 @@ def commercial_db(monkeypatch):
         metadata,
         __import__("sqlalchemy").Column(
             "id",
-            String(36),
+            UUIDString(),
             primary_key=True,
         ),
         __import__("sqlalchemy").Column(

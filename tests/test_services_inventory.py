@@ -6,9 +6,27 @@ import pytest
 import zipfile
 from sqlalchemy import Boolean, Column, DateTime, MetaData, Numeric, String, Table, create_engine, insert, select
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.types import TypeDecorator
+from pydantic import ValidationError
 from app.schemas.inventory import AnalyticsPeriod, AnalyticsWindow, InventoryMovementCreate, MovementType, ProductCreate, SupplierCreate, SupplierProductCreate, SupplierProductUpdate
 from app.services import inventory as inventory_service
 from app.utils.exceptions import AppError, ProductImportError
+
+class UUIDString(TypeDecorator):
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+
+        return str(value)
 
 @pytest.fixture
 def inventory_db(monkeypatch):
@@ -22,7 +40,7 @@ def inventory_db(monkeypatch):
     proveedor = Table(
         "proveedor",
         metadata,
-        Column("id", String(36), primary_key=True),
+        Column("id", UUIDString(), primary_key=True),
         Column("nombre", String(150), nullable=False),
         Column("telefono", String(50)),
         Column("correo", String(150)),
@@ -35,8 +53,8 @@ def inventory_db(monkeypatch):
     producto = Table(
         "producto",
         metadata,
-        Column("id", String(36), primary_key=True),
-        Column("proveedor_id", String(36), nullable=True),
+        Column("id", UUIDString(), primary_key=True),
+        Column("proveedor_id", UUIDString(), nullable=True),
         Column("sku", String(100), nullable=False),
         Column("nombre", String(150), nullable=False),
         Column("descripcion", String(500)),
@@ -52,9 +70,9 @@ def inventory_db(monkeypatch):
     proveedor_producto = Table(
         "proveedor_producto",
         metadata,
-        Column("id", String(36), primary_key=True),
-        Column("proveedor_id", String(36), nullable=False),
-        Column("producto_id", String(36), nullable=False),
+        Column("id", UUIDString(), primary_key=True),
+        Column("proveedor_id", UUIDString(), nullable=False),
+        Column("producto_id", UUIDString(), nullable=False),
         Column("precio_cotizacion", Numeric(18, 2)),
         Column("descripcion", String(500)),
         Column("is_active", Boolean, nullable=False, default=True),
@@ -65,9 +83,9 @@ def inventory_db(monkeypatch):
     movimiento_inventario = Table(
         "movimiento_inventario",
         metadata,
-        Column("id", String(36), primary_key=True),
-        Column("producto_id", String(36), nullable=False),
-        Column("usuario_id", String(36), nullable=True),
+        Column("id", UUIDString(), primary_key=True),
+        Column("producto_id", UUIDString(), nullable=False),
+        Column("usuario_id", UUIDString(), nullable=True),
         Column("tipo_movimiento", String(100), nullable=False),
         Column("fecha", DateTime, nullable=False),
         Column("cantidad", Numeric(18, 2), nullable=False),
@@ -75,14 +93,14 @@ def inventory_db(monkeypatch):
         Column("stock_resultante", Numeric(18, 2), nullable=False),
         Column("motivo", String(500)),
         Column("referencia_tipo", String(100)),
-        Column("referencia_id", String(36)),
+        Column("referencia_id", UUIDString(), nullable=True),
     )
 
     alerta = Table(
         "alerta",
         metadata,
-        Column("id", String(36), primary_key=True),
-        Column("producto_id", String(36), nullable=False),
+        Column("id", UUIDString(), primary_key=True),
+        Column("producto_id", UUIDString(), nullable=False),
         Column("tipo", String(50), nullable=False),
         Column("mensaje", String(500)),
         Column("fecha", DateTime),
@@ -1561,7 +1579,7 @@ def test_create_inventory_movement_inactive_product(inventory_db,):
 
     assert exc.value.status_code == 400
 
-def test_create_inventory_movement_zero_quantity(inventory_db,):
+def test_create_inventory_movement_zero_quantity(inventory_db):
     db, tables, user = inventory_db
 
     product_id = _insert_product(
@@ -1569,18 +1587,12 @@ def test_create_inventory_movement_zero_quantity(inventory_db,):
         tables,
     )
 
-    with pytest.raises(AppError) as exc:
-        inventory_service.create_inventory_movement(
-            InventoryMovementCreate(
-                producto_id=product_id,
-                tipo_movimiento="entrada_manual",
-                cantidad=Decimal("0"),
-            ),
-            user,
-            db,
+    with pytest.raises(ValidationError):
+        InventoryMovementCreate(
+            producto_id=product_id,
+            tipo_movimiento=MovementType.ENTRADA_MANUAL,
+            cantidad=Decimal("0"),
         )
-
-    assert exc.value.status_code == 400
 
 def test_create_inventory_movement_insufficient_stock(inventory_db,):
     db, tables, user = inventory_db

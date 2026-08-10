@@ -6,11 +6,12 @@ from app.schemas.users import UserStatusUpdate, UserUpdate
 from app.services import users as users_service
 from app.utils.exceptions import AppError
 
-def _user(db, email):
+def _user(db, identifier):
     for user in db.data[User]:
-        if user.email == email:
+        if (user.email == identifier or getattr(user, "username", None) == identifier):
             return user
-    raise AssertionError(f"User {email} not found")
+
+    raise AssertionError(f"User {identifier} not found")
 
 def _role(db, name):
     for role in db.data[Role]:
