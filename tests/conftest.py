@@ -4,8 +4,11 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
+from types import SimpleNamespace
+from sqlalchemy import Boolean, Column, DateTime, MetaData, Numeric, String, Table, create_engine
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
 import app.services.auth as auth_service
 from app.api.dependencies.auth import get_current_user, get_db
 from app.core.config import DEMO_USER_PASSWORD
