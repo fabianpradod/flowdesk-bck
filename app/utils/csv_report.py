@@ -2,7 +2,7 @@ import csv
 from decimal import Decimal, InvalidOperation
 from io import StringIO
 
-from app.services.reports import ReportDataset
+from app.schemas.reports import ReportDataset
 
 # A cell opening with one of these is read as a formula by Excel and LibreOffice.
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
