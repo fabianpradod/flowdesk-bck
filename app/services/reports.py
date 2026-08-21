@@ -1,12 +1,12 @@
-from dataclasses import dataclass
 from datetime import date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.orm import Session
 
 from app.models.users import User
 from app.schemas.inventory import AnalyticsPeriod, MovementType
+from app.schemas.reports import ReportDataset, ReportFormat, ReportType
 from app.services.inventory import (
     _get_tenant_tables_for_user,
     _resolve_analytics_range,
@@ -14,6 +14,9 @@ from app.services.inventory import (
     _utcnow,
     format_inventory_history_row,
 )
+from app.utils.csv_report import render_csv
+from app.utils.exceptions import AppError
+from app.utils.pdf_report import render_pdf
 
 INVENTORY_COLUMNS = [
     "SKU",
@@ -57,16 +60,8 @@ MOVEMENT_TYPE_LABELS = {
 }
 DIRECTION_LABELS = {"in": "Entrada", "out": "Salida"}
 EMPTY_CELL = "—"
-
-
-@dataclass
-class ReportDataset:
-    """The seam between data and format: builders produce it, renderers consume it."""
-
-    title: str
-    columns: list[str]
-    rows: list[list[str]]
-    metadata: dict
+GENERATED_STATUS = "generado"
+RENDERERS = {"csv": render_csv, "pdf": render_pdf}
 
 
 def build_inventory_dataset(
@@ -306,3 +301,64 @@ def _timestamp(value: datetime | None) -> str:
     if value is None:
         return EMPTY_CELL
     return value.strftime("%Y-%m-%d %H:%M")
+
+
+def generate_report(
+    dataset: ReportDataset,
+    current_user: User,
+    db: Session,
+    *,
+    report_type: ReportType,
+    report_format: ReportFormat,
+) -> tuple[bytes, str]:
+    """Renders a dataset and records the generation in the tenant's reporte table."""
+    renderer = RENDERERS.get(report_format)
+    if renderer is None:
+        raise AppError(status_code=400, message="Unsupported report format")
+
+    payload = renderer(dataset)
+    _record_generation(current_user, db, dataset, report_type=report_type, report_format=report_format)
+    return payload, build_filename(report_type, report_format)
+
+
+def list_report_history(current_user: User, db: Session, *, limit: int = 20) -> list[dict]:
+    tables = _get_tenant_tables_for_user(current_user)
+    reports = tables["reporte"]
+    rows = db.execute(
+        select(reports).order_by(reports.c.fecha_generacion.desc()).limit(limit)
+    ).mappings()
+    return [dict(row) for row in rows]
+
+
+def build_filename(report_type: ReportType, report_format: ReportFormat) -> str:
+    return f"reporte_{report_type}_{_utcnow().date().isoformat()}.{report_format}"
+
+
+def _record_generation(
+    current_user: User,
+    db: Session,
+    dataset: ReportDataset,
+    *,
+    report_type: ReportType,
+    report_format: ReportFormat,
+) -> None:
+    tables = _get_tenant_tables_for_user(current_user)
+    reports = tables["reporte"]
+    try:
+        db.execute(
+            insert(reports).values(
+                id=uuid4(),
+                tipo=report_type,
+                periodo_inicio=dataset.metadata.get("periodo_inicio"),
+                periodo_fin=dataset.metadata.get("periodo_fin"),
+                formato=report_format,
+                estado=GENERATED_STATUS,
+                generado_por_usuario_id=getattr(current_user, "id", None),
+                fecha_generacion=_utcnow(),
+                ruta_archivo=None,
+            )
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise AppError(500, f"Failed to record report generation: {str(e)}")

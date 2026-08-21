@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
@@ -12,6 +13,16 @@ REPORT_MEDIA_TYPES: dict[str, str] = {
     "csv": "text/csv; charset=utf-8",
     "pdf": "application/pdf",
 }
+
+
+@dataclass
+class ReportDataset:
+    """The seam between data and format: builders produce it, renderers consume it."""
+
+    title: str
+    columns: list[str]
+    rows: list[list[str]]
+    metadata: dict
 
 
 class ReportHistoryRow(BaseModel):

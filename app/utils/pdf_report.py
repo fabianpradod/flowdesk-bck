@@ -6,7 +6,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer
 
-from app.services.reports import ReportDataset
+from app.schemas.reports import ReportDataset
 
 PAGE_SIZE = landscape(A4)
 PAGE_MARGIN = 15 * mm
