@@ -10,6 +10,7 @@ from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
 from app.api.v1.routes.roles import router as roles_router
 from app.api.v1.routes.inventory import router as inventory_router
+from app.api.v1.routes.reports import router as reports_router
 from app.utils.exceptions import build_error_payload
 
 app = FastAPI()
@@ -50,6 +51,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(inventory_router)
+app.include_router(reports_router)
 
 @app.get("/")
 def read_root():
