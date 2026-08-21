@@ -4,14 +4,22 @@ from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.api.dependencies.auth import get_current_user, get_db
+from app.api.v1.routes.reports import router as reports_router
 from app.services.reports import (
     ALERT_COLUMNS,
     INVENTORY_COLUMNS,
     MOVEMENT_COLUMNS,
     ReportDataset,
     build_alerts_dataset,
+    build_filename,
     build_inventory_dataset,
     build_movements_dataset,
+    generate_report,
+    list_report_history,
 )
 from app.utils.csv_report import escape_formula, render_csv
 from app.utils.exceptions import AppError
@@ -434,6 +442,190 @@ class ReportMetadataTests(unittest.TestCase):
 
         self.assertIsNone(dataset.metadata["periodo_inicio"])
         self.assertIsNone(dataset.metadata["periodo_fin"])
+
+
+class ReportGenerationTests(unittest.TestCase):
+    def test_renders_csv_and_records_the_generation(self):
+        db = FakeDB()
+
+        payload, filename = generate_report(
+            make_dataset(), make_user(), db, report_type="inventario", report_format="csv"
+        )
+
+        self.assertTrue(payload.startswith(b"\xef\xbb\xbf"))
+        self.assertTrue(filename.startswith("reporte_inventario_"))
+        self.assertTrue(filename.endswith(".csv"))
+        self.assertEqual(db.commits, 1)
+
+    def test_renders_pdf_and_records_the_generation(self):
+        db = FakeDB()
+
+        payload, filename = generate_report(
+            make_pdf_dataset(), make_user(), db, report_type="alertas", report_format="pdf"
+        )
+
+        self.assertTrue(payload.startswith(b"%PDF-"))
+        self.assertTrue(filename.endswith(".pdf"))
+        self.assertEqual(db.commits, 1)
+
+    def test_the_audit_row_carries_the_type_format_status_and_user(self):
+        db = FakeDB()
+        user = make_user()
+
+        generate_report(make_dataset(), user, db, report_type="inventario", report_format="csv")
+
+        values = db.statements[0].compile().params
+        self.assertEqual(values["tipo"], "inventario")
+        self.assertEqual(values["formato"], "csv")
+        self.assertEqual(values["estado"], "generado")
+        self.assertEqual(values["generado_por_usuario_id"], user.id)
+        self.assertIsNone(values["ruta_archivo"])
+
+    def test_the_audit_row_carries_the_period_of_a_ranged_report(self):
+        db = FakeDB()
+        dataset = make_dataset()
+        dataset.metadata = {"periodo_inicio": date(2026, 5, 1), "periodo_fin": date(2026, 5, 31)}
+
+        generate_report(dataset, make_user(), db, report_type="movimientos", report_format="csv")
+
+        values = db.statements[0].compile().params
+        self.assertEqual(values["periodo_inicio"], date(2026, 5, 1))
+        self.assertEqual(values["periodo_fin"], date(2026, 5, 31))
+
+    def test_rejects_an_unsupported_format(self):
+        db = FakeDB()
+
+        with self.assertRaises(AppError) as error:
+            generate_report(make_dataset(), make_user(), db, report_type="inventario", report_format="xlsx")
+
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertEqual(db.commits, 0)
+
+    def test_rolls_back_when_the_audit_row_fails(self):
+        class FailingDB(FakeDB):
+            def execute(self, statement):
+                raise RuntimeError("insert failed")
+
+        db = FailingDB()
+
+        with self.assertRaises(AppError) as error:
+            generate_report(make_dataset(), make_user(), db, report_type="inventario", report_format="csv")
+
+        self.assertEqual(error.exception.status_code, 500)
+        self.assertEqual(db.rollbacks, 1)
+
+    def test_the_filename_carries_the_type_and_extension(self):
+        self.assertTrue(build_filename("movimientos", "pdf").startswith("reporte_movimientos_"))
+        self.assertTrue(build_filename("movimientos", "pdf").endswith(".pdf"))
+
+
+class ReportHistoryTests(unittest.TestCase):
+    def test_returns_the_recorded_generations(self):
+        recorded = {"id": uuid4(), "tipo": "inventario", "formato": "csv", "estado": "generado"}
+        db = FakeDB([[recorded]])
+
+        history = list_report_history(make_user(), db)
+
+        self.assertEqual(history, [recorded])
+
+    def test_applies_the_requested_limit(self):
+        db = FakeDB([[]])
+
+        list_report_history(make_user(), db, limit=5)
+
+        self.assertEqual(db.statements[0].compile().params["param_1"], 5)
+
+
+def make_client(db, role="admin"):
+    user = SimpleNamespace(
+        id=uuid4(),
+        company_id=uuid4(),
+        username="fabian",
+        is_active=True,
+        role=SimpleNamespace(name=role),
+        company=SimpleNamespace(is_active=True, schema_name=SCHEMA_NAME, name="Flow Desk SA"),
+    )
+    app = FastAPI()
+    app.include_router(reports_router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    return TestClient(app)
+
+
+class ReportEndpointTests(unittest.TestCase):
+    def test_inventory_report_downloads_as_csv_by_default(self):
+        db = FakeDB([[make_product_row()]])
+
+        response = make_client(db).get("/api/v1/reports/inventario")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/csv; charset=utf-8")
+        self.assertIn("attachment;", response.headers["content-disposition"])
+        self.assertIn(".csv", response.headers["content-disposition"])
+        self.assertTrue(response.content.startswith(b"\xef\xbb\xbf"))
+
+    def test_inventory_report_downloads_as_pdf_when_requested(self):
+        db = FakeDB([[make_product_row()]])
+
+        response = make_client(db).get("/api/v1/reports/inventario?format=pdf")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF-"))
+
+    def test_movements_report_downloads(self):
+        db = FakeDB([[make_movement_row()]])
+
+        response = make_client(db).get("/api/v1/reports/movimientos?period=7d")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("reporte_movimientos_", response.headers["content-disposition"])
+
+    def test_alerts_report_downloads(self):
+        db = FakeDB([[make_alert_row()]])
+
+        response = make_client(db).get("/api/v1/reports/alertas?period=7d&format=pdf")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("reporte_alertas_", response.headers["content-disposition"])
+
+    def test_rejects_an_unknown_format_before_touching_the_database(self):
+        db = FakeDB([[make_product_row()]])
+
+        response = make_client(db).get("/api/v1/reports/inventario?format=xlsx")
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(db.statements, [])
+
+    def test_rejects_a_custom_period_without_both_dates(self):
+        db = FakeDB([[make_movement_row()]])
+
+        response = make_client(db).get("/api/v1/reports/movimientos?period=custom&start_date=2026-05-01")
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_history_is_not_shadowed_by_the_report_type_routes(self):
+        db = FakeDB([[]])
+
+        response = make_client(db).get("/api/v1/reports/history")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
+    def test_reports_are_refused_for_a_non_admin_role(self):
+        db = FakeDB([[make_product_row()]])
+
+        response = make_client(db, role="employee").get("/api/v1/reports/inventario")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(db.statements, [])
+
+    def test_reports_are_allowed_for_a_superadmin(self):
+        db = FakeDB([[make_product_row()]])
+
+        response = make_client(db, role="superadmin").get("/api/v1/reports/inventario")
+
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == "__main__":
