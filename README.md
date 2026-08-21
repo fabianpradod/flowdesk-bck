@@ -60,6 +60,22 @@ Un proveedor no puede desactivarse ni eliminarse mientras tenga productos activo
 asociados; en ese caso la API responde 400 `Supplier still has active products`.
 El campo `correo` se valida como email al crear y actualizar.
 
+### Tareas — `/api/v1/tasks`
+
+Todos los endpoints requieren autenticación y solo permiten operar sobre las
+tareas del usuario actual. Los estados válidos son `pendiente`, `en_progreso`,
+`completada` y `cancelada`; las prioridades son `baja`, `media`, `alta` y
+`urgente`.
+
+| Método | Path | Descripción |
+|---|---|---|
+| GET | `` | Lista tareas; filtros opcionales `estado`, `prioridad` y `search` |
+| POST | `` | Crea una tarea con estado inicial `pendiente` |
+| GET | `/{task_id}` | Obtiene una tarea propia |
+| PUT | `/{task_id}` | Actualiza título, descripción, fecha límite o prioridad |
+| PATCH | `/{task_id}/status` | Cambia el estado de una tarea |
+| DELETE | `/{task_id}` | Elimina una tarea propia |
+
 ## Stack
 
 - FastAPI
