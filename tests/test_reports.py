@@ -8,10 +8,12 @@ from app.services.reports import (
     ALERT_COLUMNS,
     INVENTORY_COLUMNS,
     MOVEMENT_COLUMNS,
+    ReportDataset,
     build_alerts_dataset,
     build_inventory_dataset,
     build_movements_dataset,
 )
+from app.utils.csv_report import escape_formula, render_csv
 from app.utils.exceptions import AppError
 
 
@@ -264,6 +266,72 @@ class AlertsDatasetTests(unittest.TestCase):
         self.assertNotIn("pendiente", db.statements[0].compile().params.values())
         self.assertEqual(dataset.rows[0][5], "Resuelta")
         self.assertEqual(dataset.rows[0][6], "2026-08-20 09:00")
+
+
+def make_dataset(columns=None, rows=None):
+    return ReportDataset(
+        title="Reporte de Inventario",
+        columns=columns if columns is not None else ["SKU", "Stock Mínimo"],
+        rows=rows if rows is not None else [["trn-001", "10.00"]],
+        metadata={},
+    )
+
+
+class CsvRenderTests(unittest.TestCase):
+    def test_starts_with_a_bom_so_excel_reads_the_accents(self):
+        payload = render_csv(make_dataset())
+
+        self.assertTrue(payload.startswith(b"\xef\xbb\xbf"))
+        self.assertTrue(payload.decode("utf-8-sig").startswith("SKU"))
+
+    def test_round_trips_spanish_accents(self):
+        payload = render_csv(make_dataset(columns=["Stock Mínimo", "Dirección"]))
+
+        self.assertIn("Stock Mínimo", payload.decode("utf-8-sig"))
+        self.assertIn("Dirección", payload.decode("utf-8-sig"))
+
+    def test_writes_the_header_row_followed_by_the_data_rows(self):
+        payload = render_csv(make_dataset(rows=[["a", "1.00"], ["b", "2.00"]]))
+
+        lines = payload.decode("utf-8-sig").strip().splitlines()
+        self.assertEqual(lines, ["SKU,Stock Mínimo", "a,1.00", "b,2.00"])
+
+    def test_renders_a_header_only_file_when_there_are_no_rows(self):
+        payload = render_csv(make_dataset(rows=[]))
+
+        self.assertEqual(payload.decode("utf-8-sig").strip(), "SKU,Stock Mínimo")
+
+    def test_quotes_cells_containing_the_delimiter(self):
+        payload = render_csv(make_dataset(rows=[["a,b", "1.00"]]))
+
+        self.assertIn('"a,b"', payload.decode("utf-8-sig"))
+
+
+class CsvFormulaEscapingTests(unittest.TestCase):
+    def test_escapes_a_leading_equals(self):
+        self.assertEqual(escape_formula("=SUM(A1)"), "'=SUM(A1)")
+
+    def test_escapes_every_formula_prefix(self):
+        for value in ("=cmd", "+cmd", "@cmd", "\tcmd", "\rcmd"):
+            with self.subTest(value=value):
+                self.assertEqual(escape_formula(value), f"'{value}")
+
+    def test_escapes_a_payload_disguised_as_a_negative_number(self):
+        self.assertEqual(escape_formula("-5+cmd|' /C calc'!A0"), "'-5+cmd|' /C calc'!A0")
+
+    def test_leaves_a_genuine_negative_number_numeric(self):
+        self.assertEqual(escape_formula("-5.00"), "-5.00")
+
+    def test_escapes_non_finite_values(self):
+        self.assertEqual(escape_formula("-Infinity"), "'-Infinity")
+
+    def test_leaves_ordinary_text_untouched(self):
+        self.assertEqual(escape_formula("Tornillo"), "Tornillo")
+
+    def test_escaping_survives_the_full_render(self):
+        payload = render_csv(make_dataset(rows=[["=SUM(A1)", "1.00"]]))
+
+        self.assertIn("'=SUM(A1)", payload.decode("utf-8-sig"))
 
 
 class ReportMetadataTests(unittest.TestCase):
