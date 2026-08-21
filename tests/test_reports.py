@@ -15,6 +15,7 @@ from app.services.reports import (
 )
 from app.utils.csv_report import escape_formula, render_csv
 from app.utils.exceptions import AppError
+from app.utils.pdf_report import render_pdf
 
 
 SCHEMA_NAME = "tenant_" + "a" * 32
@@ -332,6 +333,78 @@ class CsvFormulaEscapingTests(unittest.TestCase):
         payload = render_csv(make_dataset(rows=[["=SUM(A1)", "1.00"]]))
 
         self.assertIn("'=SUM(A1)", payload.decode("utf-8-sig"))
+
+
+PDF_METADATA = {
+    "empresa": "Flow Desk SA",
+    "generado_por": "fabian",
+    "fecha_generacion": datetime(2026, 8, 20, 14, 32, tzinfo=timezone.utc),
+    "filtros": "Periodo: 2026-07-21 a 2026-08-20 · Producto: todos",
+}
+
+
+def make_pdf_dataset(rows=None):
+    return ReportDataset(
+        title="Reporte de Inventario",
+        columns=INVENTORY_COLUMNS,
+        rows=rows if rows is not None else [
+            ["trn-001", "Tornillo", "Acme", "3.00", "10.00", "2.50", "unidad", "Activo"]
+        ],
+        metadata=dict(PDF_METADATA),
+    )
+
+
+def page_count(payload: bytes) -> int:
+    return payload.count(b"/Type /Page\n") + payload.count(b"/Type /Page/")
+
+
+class PdfRenderTests(unittest.TestCase):
+    def test_returns_a_pdf_payload(self):
+        payload = render_pdf(make_pdf_dataset())
+
+        self.assertTrue(payload.startswith(b"%PDF-"))
+        self.assertTrue(payload.rstrip().endswith(b"%%EOF"))
+
+    def test_renders_a_single_page_for_a_short_report(self):
+        self.assertEqual(page_count(render_pdf(make_pdf_dataset())), 1)
+
+    def test_paginates_a_long_report(self):
+        rows = [
+            [f"trn-{index:03d}", "Tornillo", "Acme", "1.00", "2.00", "3.00", "unidad", "Activo"]
+            for index in range(200)
+        ]
+
+        payload = render_pdf(make_pdf_dataset(rows))
+
+        self.assertGreater(page_count(payload), 1)
+
+    def test_renders_a_placeholder_page_when_there_are_no_rows(self):
+        payload = render_pdf(make_pdf_dataset([]))
+
+        self.assertTrue(payload.startswith(b"%PDF-"))
+        self.assertEqual(page_count(payload), 1)
+
+    def test_survives_markup_characters_in_the_data(self):
+        rows = [["<b>trn</b>", "Acme & Co", "a<b", "1.00", "2.00", "3.00", "unidad", "Activo"]]
+
+        payload = render_pdf(make_pdf_dataset(rows))
+
+        self.assertTrue(payload.startswith(b"%PDF-"))
+
+    def test_survives_accented_headers_and_cells(self):
+        rows = [["trn-001", "Atornillación", "Acme", "1.00", "2.00", "3.00", "unidad", "Activo"]]
+
+        payload = render_pdf(make_pdf_dataset(rows))
+
+        self.assertTrue(payload.startswith(b"%PDF-"))
+
+    def test_renders_without_optional_metadata(self):
+        dataset = make_pdf_dataset()
+        dataset.metadata = {}
+
+        payload = render_pdf(dataset)
+
+        self.assertTrue(payload.startswith(b"%PDF-"))
 
 
 class ReportMetadataTests(unittest.TestCase):
