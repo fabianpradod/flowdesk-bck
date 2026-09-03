@@ -29,6 +29,23 @@ No necesitan correr nada localmente. Solo apunten su frontend a `http://3.235.13
 5. Instalar dependencias: `pip install -r requirements.txt`
 6. Correr: `uvicorn main:app --reload`
 
+### Análisis inteligente
+
+El endpoint `POST /api/v1/ai/analysis` utiliza Z.AI GLM-5.3-Flash para interpretar métricas de
+inventario. Crear una clave en Google AI Studio y configurar:
+
+```env
+ZAI_API_KEY=
+ZAI_MODEL=glm-5.3-flash
+ZAI_BASE_URL=https://api.z.ai/api/paas/v4
+ZAI_TIMEOUT_SECONDS=30
+```
+
+Si no se configura `ZAI_API_KEY`, el endpoint responde `503` sin impedir el
+arranque del resto de la API. El nivel gratuito puede utilizar el contenido enviado
+para mejorar productos del proveedor; consultar `docs/ai-analysis-flow.md` antes de
+habilitarlo con datos de producción.
+
 ## Endpoints
 
 Documentación interactiva completa en `/docs`.
