@@ -50,6 +50,18 @@ habilitarlo con datos de producción.
 
 Documentación interactiva completa en `/docs`.
 
+### Analítica — `/api/v1/analytics`
+
+| Método | Path | Filtros principales |
+|---|---|---|
+| GET | `/sales/metrics` | `period`, `customer_type`, `client_id`, `start_date`, `end_date` |
+| GET | `/sales/trend` | Los anteriores y `window=day|week|month` |
+| GET | `/inventory/risk-distribution` | `period`, `supplier_id`, `start_date`, `end_date` |
+
+Las métricas y tendencias consideran únicamente ventas en estado `completada`,
+`confirmada`, `finalizada` o `pagada`. La distribución de riesgo considera
+productos activos y la demanda registrada mediante movimientos `salida_venta`.
+
 ### Auth — `/api/v1/auth`
 
 | Método | Path | Rol |
