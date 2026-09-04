@@ -44,7 +44,12 @@ def get_client(client_id: UUID, current_user, db: Session) -> dict:
 def create_client(data: ClientCreate, current_user, db: Session) -> dict:
     clients = _clients_table(current_user)
     payload = _client_payload(data)
-    _ensure_email_available(db, clients, payload.get("correo"))
+    _ensure_identity_available(
+        db,
+        clients,
+        nombre=payload["nombre"],
+        correo=payload.get("correo"),
+    )
 
     now = _utcnow()
     client_id = uuid4()
@@ -71,8 +76,14 @@ def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session
     if not payload:
         raise AppError(status_code=400, message="At least one field must be provided")
 
-    if "correo" in payload:
-        _ensure_email_available(db, clients, payload.get("correo"), exclude_client_id=client_id)
+    if "nombre" in payload or "correo" in payload:
+        _ensure_identity_available(
+            db,
+            clients,
+            nombre=payload.get("nombre"),
+            correo=payload.get("correo"),
+            exclude_client_id=client_id,
+        )
 
     try:
         db.execute(
@@ -138,14 +149,29 @@ def _client_payload(data, *, exclude_unset: bool = False) -> dict:
     return payload
 
 
-def _ensure_email_available(db: Session, clients, correo: str | None, *, exclude_client_id: UUID | None = None) -> None:
-    if not correo:
+def _ensure_identity_available(
+    db: Session,
+    clients,
+    *,
+    nombre: str | None,
+    correo: str | None,
+    exclude_client_id: UUID | None = None,
+) -> None:
+    comparisons = []
+    if nombre:
+        comparisons.append(func.lower(clients.c.nombre) == nombre.casefold())
+    if correo:
+        comparisons.append(func.lower(clients.c.correo) == correo.casefold())
+    if not comparisons:
         return
-    query = select(clients.c.id).where(func.lower(clients.c.correo) == correo.lower())
+    query = select(clients.c.id, clients.c.nombre, clients.c.correo).where(or_(*comparisons))
     if exclude_client_id is not None:
         query = query.where(clients.c.id != exclude_client_id)
-    existing = db.execute(query).first()
+    existing = db.execute(query).mappings().first()
     if existing:
+        existing_name = existing.get("nombre")
+        if nombre and existing_name and existing_name.casefold() == nombre.casefold():
+            raise AppError(status_code=400, message="Client name already exists")
         raise AppError(status_code=400, message="Client email already exists")
 
 
