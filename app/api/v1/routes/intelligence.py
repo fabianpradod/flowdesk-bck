@@ -13,10 +13,10 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai-analysis"])
     response_model=IntelligentAnalysisResponse,
     summary="Generar análisis inteligente",
     description=(
-        "Genera un análisis del inventario de la empresa autenticada. "
-        "Acepta periodos predefinidos o un rango personalizado y puede limitarse "
-        "a un producto. Los datos se aíslan por empresa y no se envían datos "
-        "personales al proveedor de análisis."
+        "Genera un análisis de inventario, ventas, catálogo o del negocio completo "
+        "para la empresa autenticada. Acepta periodos predefinidos o un rango "
+        "personalizado y filtros por producto, proveedor y cliente. Los datos se "
+        "aíslan por empresa y no se envían datos personales al proveedor."
     ),
     responses={
         200: {"description": "Análisis generado correctamente"},
