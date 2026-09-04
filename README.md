@@ -60,18 +60,6 @@ Un proveedor no puede desactivarse ni eliminarse mientras tenga productos activo
 asociados; en ese caso la API responde 400 `Supplier still has active products`.
 El campo `correo` se valida como email al crear y actualizar.
 
-### Ventas — `/api/v1/commercial`
-
-| Método | Path | Descripción |
-|---|---|---|
-| POST | `/sales` | Registra una venta y descuenta inventario de forma atómica. `cliente_id` es opcional para consumidor final. |
-| GET | `/sales/{sale_id}` | Obtiene la venta con sus líneas y el cliente asociado. |
-| GET | `/clients/{client_id}/purchases` | Lista el historial de compras del cliente; acepta `limit` y `offset`. |
-
-El precio de cada línea se toma del producto almacenado. Una venta rechaza clientes
-inactivos, productos inactivos y cantidades sin inventario suficiente. Cada línea genera
-un movimiento `salida_venta` enlazado a la venta.
-
 ## Stack
 
 - FastAPI
