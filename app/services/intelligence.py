@@ -22,14 +22,21 @@ class AnalysisProvider(Protocol):
     ) -> IntelligentAnalysisContent | dict[str, Any]: ...
 
 def get_analysis_provider() -> AnalysisProvider:
-    if not ZAI_API_KEY:
+    api_key = (ZAI_API_KEY or "").strip()
+    if not api_key:
         raise AppError(
             status_code=503,
             message="Intelligent analysis provider is not configured",
             code="ai_provider_unavailable",
         )
+    if not ZAI_BASE_URL.startswith("https://"):
+        raise AppError(
+            status_code=503,
+            message="Intelligent analysis provider URL must use HTTPS",
+            code="ai_provider_misconfigured",
+        )
     return ZAIAnalysisProvider(
-        api_key=ZAI_API_KEY,
+        api_key=api_key,
         model=ZAI_MODEL,
         base_url=ZAI_BASE_URL,
         timeout_seconds=ZAI_TIMEOUT_SECONDS,
