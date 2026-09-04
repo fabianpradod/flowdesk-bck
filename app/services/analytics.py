@@ -129,6 +129,116 @@ def get_inventory_risk_distribution(
         **build_risk_distribution(scores),
     }
 
+def get_top_selling_products(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    customer_type: SalesCustomerType = "all",
+    client_id: UUID | None = None,
+    supplier_id: UUID | None = None,
+    product_id: UUID | None = None,
+    limit: int = 10,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    _validate_sales_customer_filters(customer_type, client_id)
+    tables = _analytics_tables(current_user)
+    sales = tables["venta"]
+    details = tables["detalle_venta"]
+    products = tables["producto"]
+
+    units_sold = func.sum(details.c.cantidad)
+    revenue = func.sum(details.c.subtotal)
+    query = (
+        select(
+            products.c.id.label("product_id"),
+            products.c.sku,
+            products.c.nombre.label("name"),
+            units_sold.label("units_sold"),
+            func.count(func.distinct(sales.c.id)).label("sales_count"),
+            revenue.label("revenue"),
+        )
+        .select_from(
+            sales.join(details, details.c.venta_id == sales.c.id).join(
+                products, products.c.id == details.c.producto_id
+            )
+        )
+        .where(
+            sales.c.fecha >= analytics_range["start"],
+            sales.c.fecha <= analytics_range["end"],
+            func.lower(sales.c.estado).in_(FINAL_SALE_STATES),
+        )
+    )
+    if client_id is not None:
+        query = query.where(sales.c.cliente_id == client_id)
+    elif customer_type == "registered":
+        query = query.where(sales.c.cliente_id.is_not(None))
+    elif customer_type == "final_consumer":
+        query = query.where(sales.c.cliente_id.is_(None))
+    if supplier_id is not None:
+        query = query.where(products.c.proveedor_id == supplier_id)
+    if product_id is not None:
+        query = query.where(products.c.id == product_id)
+
+    query = (
+        query.group_by(products.c.id, products.c.sku, products.c.nombre)
+        .order_by(units_sold.desc(), revenue.desc(), products.c.nombre.asc())
+        .limit(limit)
+    )
+    rows = [dict(row) for row in db.execute(query).mappings()]
+    for row in rows:
+        row["units_sold"] = _decimal(row["units_sold"])
+        row["revenue"] = _money(_decimal(row["revenue"]))
+
+    return {
+        "period": period,
+        "customer_type": customer_type,
+        "client_id": client_id,
+        "supplier_id": supplier_id,
+        "product_id": product_id,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        "products": rows,
+    }
+
+
+def get_product_creation_trend(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    window: AnalyticsWindow,
+    supplier_id: UUID | None = None,
+    active_only: bool | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    products = _analytics_tables(current_user)["producto"]
+    query = select(products.c.created_at, products.c.is_active).where(
+        products.c.created_at >= analytics_range["start"],
+        products.c.created_at <= analytics_range["end"],
+    )
+    if supplier_id is not None:
+        query = query.where(products.c.proveedor_id == supplier_id)
+    if active_only is not None:
+        query = query.where(products.c.is_active.is_(active_only))
+
+    rows = [dict(row) for row in db.execute(query).mappings()]
+    points = aggregate_product_creation_trend(rows, window=window)
+    return {
+        "period": period,
+        "window": window,
+        "supplier_id": supplier_id,
+        "active_only": active_only,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        "total_created": sum(point["created_products"] for point in points),
+        "points": points,
+    }
+
 def summarize_sales(rows: list[dict[str, Any]]) -> dict[str, Any]:
     gross_sales = sum((_decimal(row["subtotal"]) for row in rows), Decimal("0"))
     discounts = sum((_decimal(row["descuento"]) for row in rows), Decimal("0"))
@@ -195,6 +305,27 @@ def build_risk_distribution(scores: list[Decimal]) -> dict[str, Any]:
         ],
     }
 
+def aggregate_product_creation_trend(
+    rows: list[dict[str, Any]], *, window: AnalyticsWindow
+) -> list[dict[str, Any]]:
+    buckets: dict[date, dict[str, Any]] = {}
+    for row in rows:
+        bucket_date = _bucket_start(row["created_at"], window)
+        bucket = buckets.setdefault(
+            bucket_date,
+            {
+                "period_start": bucket_date,
+                "period_label": _bucket_label(bucket_date, window),
+                "created_products": 0,
+                "active_products": 0,
+                "inactive_products": 0,
+            },
+        )
+        bucket["created_products"] += 1
+        status_key = "active_products" if row["is_active"] else "inactive_products"
+        bucket[status_key] += 1
+    return [buckets[key] for key in sorted(buckets)]
+
 def _fetch_final_sales(
     current_user: User,
     db: Session,
@@ -203,11 +334,7 @@ def _fetch_final_sales(
     customer_type: SalesCustomerType,
     client_id: UUID | None,
 ) -> list[dict[str, Any]]:
-    if client_id is not None and customer_type == "final_consumer":
-        raise AppError(
-            status_code=400,
-            message="client_id cannot be combined with final_consumer customer_type",
-        )
+    _validate_sales_customer_filters(customer_type, client_id)
     sales = _analytics_tables(current_user)["venta"]
     query = select(
         sales.c.fecha,
@@ -229,6 +356,15 @@ def _fetch_final_sales(
         query = query.where(sales.c.cliente_id.is_(None))
     query = query.order_by(sales.c.fecha.asc())
     return [dict(row) for row in db.execute(query).mappings()]
+
+def _validate_sales_customer_filters(
+    customer_type: SalesCustomerType, client_id: UUID | None
+) -> None:
+    if client_id is not None and customer_type == "final_consumer":
+        raise AppError(
+            status_code=400,
+            message="client_id cannot be combined with final_consumer customer_type",
+        )
 
 def _analytics_tables(current_user: User) -> dict:
     return get_tenant_tables(get_user_schema_name(current_user))
