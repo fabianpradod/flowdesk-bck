@@ -1,85 +1,92 @@
 # Flowdesk Backend
 
-API REST construida con FastAPI para el sistema de gestión de inventario Flowdesk.
+API REST multi-tenant construida con FastAPI, PostgreSQL y SQLAlchemy para
+inventario, usuarios, clientes y tareas.
 
-## URL de Producción
+## Inicio rápido local
 
-Base URL: `http://3.235.13.20`
-Documentación: `http://3.235.13.20/docs`
+Requisitos: Python 3.11+, PostgreSQL 16 y un entorno virtual.
 
-## Estructura de Branches
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
 
-- `main` — producción, no se toca directamente
-- Desarrollo se hace en branches separados y se mergea a `main` cuando esté listo
+Complete los valores obligatorios de `.env`, cree la base configurada y ejecute:
 
-## Variables de Entorno
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-El archivo `.env` se comparte por privado (nunca se sube al repo). Copiar `.env.example` y renombrarlo a `.env` con los valores que les comparta el líder del proyecto.
+La documentación interactiva queda en `http://localhost:8000/docs`. Los probes
+`GET /health` y `GET /ready` permiten comprobar el proceso y la conexión a la
+base de datos, respectivamente.
 
-## Opciones para el Equipo de Frontend
+## Inicio con Docker Compose
 
-**Opción 1 — Usar la API de producción (recomendado)**
-No necesitan correr nada localmente. Solo apunten su frontend a `http://3.235.13.20`.
+```bash
+cp .env.example .env
+docker compose up --build
+```
 
-**Opción 2 — Correr el backend localmente**
-1. Instalar PostgreSQL localmente
-2. Crear usuario `flowdesk` y base de datos `flowdesk`
-3. Copiar `.env.example` a `.env` y llenar los valores
-4. Cambiar `DB_SERVER=localhost` en el `.env` (el valor `db` es solo para producción)
-5. Instalar dependencias: `pip install -r requirements.txt`
-6. Correr: `uvicorn main:app --reload`
+El contenedor publica la API en el puerto 80. La primera ejecución crea las
+tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 
-## Endpoints
+## Variables de entorno
 
-Documentación interactiva completa en `/docs`.
-
-### Auth — `/api/v1/auth`
-
-| Método | Path | Rol |
+| Variable | Obligatoria | Uso |
 |---|---|---|
-| POST | `/register` | público |
-| POST | `/login` | público |
-| POST | `/password/set` | token `set_password` |
-| POST | `/password/forgot` | público |
-| POST | `/password/reset` | token `reset_password` |
-| POST | `/invitations/resend` | admin+ |
-| GET/POST | `/employees` | admin+ |
+| `DB_SERVER` | sí | Host de PostgreSQL (`localhost` local, `db` en Compose) |
+| `DB_DATABASE` | sí | Nombre de la base |
+| `DB_USERNAME` | sí | Usuario de la base |
+| `DB_PASSWORD` | sí | Contraseña de la base |
+| `DB_PORT` | no | Puerto, 5432 por defecto |
+| `SECRET_KEY` | sí | Firma JWT; use un valor aleatorio largo |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | no | Duración de access tokens |
+| `SUPERADMIN_EMAIL` | sí | Correo del superadministrador inicial |
+| `SUPERADMIN_USERNAME` | sí | Usuario del superadministrador inicial |
+| `SUPERADMIN_PASSWORD` | sí | Contraseña inicial del superadministrador |
+| `SMTP_USERNAME` | sí | Cuenta de envío de invitaciones y recuperación |
+| `SMTP_PASSWORD` | sí | Credencial SMTP |
+| `FRONTEND_URL` | sí | Origen CORS y base de enlaces enviados por correo |
+| `DEMO_SEED_ENABLED` | no | Habilita usuarios demo; desactivado por defecto |
+| `DEMO_USER_PASSWORD` | si activa demo | Contraseña de usuarios demo |
 
-### Proveedores — `/api/v1/inventory/suppliers`
+No suba `.env` al repositorio. `.env.example` solo contiene valores de ejemplo.
 
-| Método | Path | Rol | Notas |
-|---|---|---|---|
-| GET | `` | cualquiera | Filtros `?search=` (nombre, parcial) y `?is_active=` |
-| POST | `` | manager+ | El nombre no puede repetir el de otro proveedor activo |
-| GET | `/{supplier_id}` | cualquiera | 404 si no existe |
-| PUT | `/{supplier_id}` | manager+ | Solo se modifican los campos enviados |
-| PATCH | `/{supplier_id}/status` | admin+ | Body `{"is_active": bool}` |
-| DELETE | `/{supplier_id}` | admin+ | Soft delete — 204, marca `is_active=false` |
+## Contrato consumido por frontend
 
-Un proveedor no puede desactivarse ni eliminarse mientras tenga productos activos
-asociados; en ese caso la API responde 400 `Supplier still has active products`.
-El campo `correo` se valida como email al crear y actualizar.
+La especificación completa está en `/docs`. Estos son los grupos principales:
 
-### Tareas — `/api/v1/tasks`
+- `/api/v1/auth`: registro, inicio de sesión, invitaciones y contraseñas.
+- `/api/v1/companies`: listado de empresas para superadministración.
+- `/api/v1/users` y `/api/v1/roles`: administración de empleados y roles.
+- `/api/v1/inventory`: productos, proveedores, movimientos y analítica.
+- `/api/v1/commercial`: clientes.
+- `/api/v1/tasks`: tareas personales del usuario autenticado.
 
-Todos los endpoints requieren autenticación y solo permiten operar sobre las
-tareas del usuario actual. Los estados válidos son `pendiente`, `en_progreso`,
-`completada` y `cancelada`; las prioridades son `baja`, `media`, `alta` y
-`urgente`.
+### Tareas
+
+Los estados válidos son `pendiente`, `en_progreso`, `completada` y `cancelada`;
+las prioridades son `baja`, `media`, `alta` y `urgente`. Todas las consultas se
+restringen al usuario y al esquema tenant autenticados.
 
 | Método | Path | Descripción |
 |---|---|---|
-| GET | `` | Lista tareas; filtros opcionales `estado`, `prioridad` y `search` |
-| POST | `` | Crea una tarea con estado inicial `pendiente` |
-| GET | `/{task_id}` | Obtiene una tarea propia |
-| PUT | `/{task_id}` | Actualiza título, descripción, fecha límite o prioridad |
-| PATCH | `/{task_id}/status` | Cambia el estado de una tarea |
-| DELETE | `/{task_id}` | Elimina una tarea propia |
+| GET | `/api/v1/tasks` | Lista y filtra por `estado`, `prioridad` o `search` |
+| POST | `/api/v1/tasks` | Crea una tarea pendiente |
+| GET | `/api/v1/tasks/{task_id}` | Obtiene una tarea propia |
+| PUT | `/api/v1/tasks/{task_id}` | Actualiza los campos enviados |
+| PATCH | `/api/v1/tasks/{task_id}/status` | Cambia el estado |
+| DELETE | `/api/v1/tasks/{task_id}` | Elimina una tarea propia |
 
-## Stack
+## Pruebas
 
-- FastAPI
-- PostgreSQL
-- SQLAlchemy
-- Docker + Docker Compose
-- AWS EC2
+```bash
+pytest -q
+```
+
+Las pruebas no requieren un PostgreSQL real: reemplazan la inicialización y las
+dependencias de persistencia cuando corresponde.
