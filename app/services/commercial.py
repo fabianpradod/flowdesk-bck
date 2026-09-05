@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from app.services.inventory import _utcnow
 from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
