@@ -11,6 +11,8 @@ from app.schemas.commercial import (
     ClientResponse,
     ClientStatusUpdate,
     ClientUpdate,
+    SaleCreate,
+    SaleResponse,
 )
 
 router = APIRouter(prefix="/api/v1/commercial", tags=["commercial"])
@@ -82,3 +84,43 @@ def delete_client(
 ):
     """Desactiva un cliente del esquema de la empresa autenticada. Requiere rol manager o superior."""
     commercial_service.delete_client(client_id, current_user, db)
+
+
+@router.post("/sales", response_model=SaleResponse, status_code=201, summary="Registrar venta")
+def create_sale(
+    data: SaleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role()),
+):
+    """Registra una venta para un cliente activo o, sin cliente_id, para consumidor final."""
+    return commercial_service.create_sale(data, current_user, db)
+
+
+@router.get("/sales/{sale_id}", response_model=SaleResponse, summary="Obtener venta")
+def sale_detail(
+    sale_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role()),
+):
+    return commercial_service.get_sale(sale_id, current_user, db)
+
+
+@router.get(
+    "/clients/{client_id}/purchases",
+    response_model=list[SaleResponse],
+    summary="Historial de compras del cliente",
+)
+def client_purchases(
+    client_id: UUID,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role()),
+):
+    return commercial_service.list_client_purchases(
+        client_id,
+        current_user,
+        db,
+        limit=limit,
+        offset=offset,
+    )
