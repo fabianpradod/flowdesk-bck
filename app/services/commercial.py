@@ -4,12 +4,12 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate
 from app.services.inventory import _sync_stock_alerts
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
-
 
 def list_clients(
     current_user,
@@ -56,19 +56,32 @@ def create_client(data: ClientCreate, current_user, db: Session) -> dict:
     now = _utcnow()
     client_id = uuid4()
     try:
-        db.execute(
-            insert(clients).values(
+        result = db.execute(
+            insert(clients)
+            .values(
                 id=client_id,
                 **payload,
                 updated_at=now,
             )
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+            .returning(clients)
+        ).mappings().one()
 
-    return get_client(client_id, current_user, db)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message="Database error while creating client",
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message="Server error while creating client",
+        ) from exc
+
+    return dict(result)
 
 
 def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session) -> dict:
@@ -88,34 +101,82 @@ def update_client(client_id: UUID, data: ClientUpdate, current_user, db: Session
         )
 
     try:
-        db.execute(
+        result = db.execute(
             update(clients)
             .where(clients.c.id == client_id)
-            .values(**payload, updated_at=_utcnow())
-        )
+            .values(
+                **payload,
+                updated_at=_utcnow(),
+            )
+            .returning(clients)
+        ).mappings().one()
+
         db.commit()
-    except Exception:
+    except SQLAlchemyError as exc:
         db.rollback()
-        raise
+        raise AppError(
+            status_code=500,
+            message="Database error while updating client",
+        ) from exc
+    except Exception as exc:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message="Server error while updating client",
+        ) from exc
 
-    return get_client(client_id, current_user, db)
+    return dict(result)
 
 
-def update_client_status(client_id: UUID, is_active: bool, current_user, db: Session) -> dict:
+def update_client_status(client_id: UUID, is_active: bool, current_user, db: Session,) -> dict:
     clients = _clients_table(current_user)
-    _ensure_client_exists(db, clients, client_id)
+
+    current = db.execute(
+        select(clients).where(
+            clients.c.id == client_id
+        )
+    ).mappings().first()
+
+    if current is None:
+        raise AppError(
+            status_code=404,
+            message="Client not found",
+        )
+
+    if current["is_active"] == is_active:
+        raise AppError(
+            status_code=400,
+            message="Client already has this status",
+        )
+
     try:
-        db.execute(
+        result = db.execute(
             update(clients)
             .where(clients.c.id == client_id)
-            .values(is_active=is_active, updated_at=_utcnow())
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+            .values(
+                is_active=is_active,
+                updated_at=_utcnow(),
+            )
+            .returning(clients)
+        ).mappings().one()
 
-    return get_client(client_id, current_user, db)
+        db.commit()
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message="Database error while updating client status",
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message="Server error while updating client status",
+        ) from exc
+
+    return dict(result)
 
 
 def delete_client(client_id: UUID, current_user, db: Session) -> None:
@@ -128,9 +189,18 @@ def delete_client(client_id: UUID, current_user, db: Session) -> None:
             .values(is_active=False, updated_at=_utcnow())
         )
         db.commit()
-    except Exception:
+    except SQLAlchemyError as exc:
         db.rollback()
-        raise
+        raise AppError(
+            status_code=500,
+            message="Database error while deleting client",
+        ) from exc
+    except Exception as exc:
+        db.rollback()
+        raise AppError(
+            status_code=500,
+            message="Server error while deleting client",
+        ) from exc
 
 
 def create_sale(data: SaleCreate, current_user, db: Session) -> dict:

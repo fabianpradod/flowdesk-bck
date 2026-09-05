@@ -256,8 +256,7 @@ def clear_rate_limit():
 @pytest.fixture(autouse=True)
 def seed_test_db():
     app.state.test_db = _seed_fake_db()
-    yield
-    app.state.test_db = _seed_fake_db()
+    yield app.state.test_db
 
 @pytest.fixture
 def client():

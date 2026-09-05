@@ -166,6 +166,7 @@ def _ensure_demo_products(db: Session, products, supplier_id):
                 stock_actual=data["stock_actual"],
                 stock_minimo=data["stock_minimo"],
                 unidad_medida="unidad",
+                is_active=True,
             )
         )
     return product_ids

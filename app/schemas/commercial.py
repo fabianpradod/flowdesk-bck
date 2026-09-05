@@ -43,6 +43,7 @@ class ClientUpdate(BaseModel):
     def strip_text(cls, value):
         if value is None:
             return value
+        
         return str(value).strip()
 
     @field_validator("correo", mode="before")
@@ -50,14 +51,9 @@ class ClientUpdate(BaseModel):
     def normalize_email(cls, value):
         if value is None:
             return value
+        
         cleaned = str(value).strip().lower()
         return cleaned or None
-
-    @model_validator(mode="after")
-    def require_update_field(self):
-        if not self.model_fields_set:
-            raise ValueError("At least one field must be provided")
-        return self
 
 
 class ClientStatusUpdate(BaseModel):

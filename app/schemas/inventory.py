@@ -1,21 +1,22 @@
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+class MovementType(str, Enum):
+    ENTRADA_COMPRAS = "entrada_compra"
+    ENTRADA_MANUAL = "entrada_manual"
+    AJUSTE_POSITIVO = "ajuste_positivo"
+    DEVOLUCION_CLIENTE = "devolucion_cliente"
+    SALIDA_VENTA = "salida_venta"
+    SALIDA_MANUAL = "salida_manual"
+    AJUSTE_NEGATIVO = "ajuste_negativo"
+    DEVOLUCION_PROVEEDOR = "devolucion_proveedor"
 
-MovementType = Literal[
-    "entrada_compra",
-    "entrada_manual",
-    "ajuste_positivo",
-    "devolucion_cliente",
-    "salida_venta",
-    "salida_manual",
-    "ajuste_negativo",
-    "devolucion_proveedor",
-]
+
 AnalyticsPeriod = Literal["7d", "30d", "90d", "6m", "12m", "ytd", "custom"]
 AnalyticsWindow = Literal["day", "week", "month"]
 ProductAnalyticsSort = Literal[
@@ -33,17 +34,14 @@ class SupplierCreate(BaseModel):
     correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
-
 class SupplierUpdate(BaseModel):
     nombre: str | None = Field(default=None, min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
     correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
-
 class SupplierStatusUpdate(BaseModel):
     is_active: bool
-
 
 class SupplierResponse(BaseModel):
     id: UUID
@@ -54,6 +52,48 @@ class SupplierResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class SupplierProductCreate(BaseModel):
+    proveedor_id: UUID
+    producto_id: UUID
+    precio_cotizacion: Decimal = Field(
+        ge=0,
+        decimal_places=2,
+    )
+    descripcion: str | None = Field(
+        default=None,
+        max_length=1000,
+    )
+
+class SupplierProductUpdate(BaseModel):
+    precio_cotizacion: Decimal | None = Field(
+        default=None,
+        ge=0,
+        decimal_places=2,
+    )
+    descripcion: str | None = Field(
+        default=None,
+        max_length=1000,
+    )
+    is_active: bool | None = None
+
+class SupplierProductResponse(BaseModel):
+    supplier_id: UUID
+    supplier_name: str
+    supplier_email: str | None
+    supplier_phone: str | None
+
+    product_id: UUID
+    product_sku: str
+    product_name: str
+    product_description: str | None
+
+    quotation: Decimal
+
+    product_active: bool
+    supplier_active: bool
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -183,8 +223,6 @@ class ProductAnalyticsResponse(BaseModel):
     start_date: date
     end_date: date
     products: list[ProductAnalyticsRow]
-
-
 
 
 class InventoryMetricsResponse(BaseModel):

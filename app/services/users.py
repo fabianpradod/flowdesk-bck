@@ -16,10 +16,10 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(404, "User not found")
-    if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
+    if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
+        raise AppError(403, "Not authorized")
 
     if data.username is not None:
         user.username = data.username
@@ -40,10 +40,10 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(404, "User not found")
-    if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
+    if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
+        raise AppError(403, "Not authorized")
 
     user.is_active = data.is_active
     db.commit()
@@ -57,10 +57,10 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
         raise AppError(404, "User not found")
     if user.id == current_user.id:
         raise AppError(400, "Cannot delete your own account")
-    if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot delete a superadmin user")
+    if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
+        raise AppError(403, "Not authorized")
 
     user.is_active = False
     db.commit()
