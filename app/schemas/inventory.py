@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class MovementType(str, Enum):
     ENTRADA_COMPRAS = "entrada_compra"
@@ -15,18 +15,8 @@ class MovementType(str, Enum):
     SALIDA_MANUAL = "salida_manual"
     AJUSTE_NEGATIVO = "ajuste_negativo"
     DEVOLUCION_PROVEEDOR = "devolucion_proveedor"
-'''
-MovementType = Literal[
-    "entrada_compra",
-    "entrada_manual",
-    "ajuste_positivo",
-    "devolucion_cliente",
-    "salida_venta",
-    "salida_manual",
-    "ajuste_negativo",
-    "devolucion_proveedor",
-]
-'''
+
+
 AnalyticsPeriod = Literal["7d", "30d", "90d", "6m", "12m", "ytd", "custom"]
 AnalyticsWindow = Literal["day", "week", "month"]
 ProductAnalyticsSort = Literal[
@@ -41,13 +31,13 @@ ProductAnalyticsSort = Literal[
 class SupplierCreate(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
-    correo: str | None = Field(default=None, max_length=150)
+    correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
 class SupplierUpdate(BaseModel):
     nombre: str | None = Field(default=None, min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
-    correo: str | None = Field(default=None, max_length=150)
+    correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
 class SupplierStatusUpdate(BaseModel):
