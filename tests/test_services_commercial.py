@@ -513,7 +513,7 @@ def test_client_payload_exclude_unset(commercial_db):
         "nombre": "Nuevo",
     }
 
-def test_client_payload_excludes_none(commercial_db):
+def test_client_payload_keeps_explicit_nulls(commercial_db):
     db, clients, user = commercial_db
 
     payload = commercial_service._client_payload(
@@ -524,9 +524,22 @@ def test_client_payload_excludes_none(commercial_db):
         exclude_unset=True,
     )
 
+    assert payload["correo"] is None
+    assert payload["nombre"] == "Nuevo"
+
+def test_client_payload_omits_fields_that_were_not_sent(commercial_db):
+    db, clients, user = commercial_db
+
+    payload = commercial_service._client_payload(
+        ClientUpdate(
+            nombre="Nuevo",
+        ),
+        exclude_unset=True,
+    )
+
     assert "correo" not in payload
 
-def test_ensure_email_available_allows_same_client(commercial_db):
+def test_ensure_identity_available_allows_same_client(commercial_db):
     db, clients, user = commercial_db
 
     client_id = _insert_client(
@@ -534,20 +547,22 @@ def test_ensure_email_available_allows_same_client(commercial_db):
         correo="same@test.com",
     )
 
-    commercial_service._ensure_email_available(
+    commercial_service._ensure_identity_available(
         db,
         clients,
-        "same@test.com",
+        nombre=None,
+        correo="same@test.com",
         exclude_client_id=client_id,
     )
 
-def test_ensure_email_available_empty_email(commercial_db):
+def test_ensure_identity_available_without_values(commercial_db):
     db, clients, user = commercial_db
 
-    commercial_service._ensure_email_available(
+    commercial_service._ensure_identity_available(
         db,
         clients,
-        None,
+        nombre=None,
+        correo=None,
     )
 
 def test_ensure_client_exists_success(commercial_db):
