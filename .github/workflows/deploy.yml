@@ -17,6 +17,32 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            cd flowdesk-bck
+            set -e
+
+            echo "Disk usage before cleanup:"
+            df -h /
+
+            # Remove VS Code Remote server cache
+            rm -rf ~/.vscode-server
+
+            # Clean Docker build cache / unused resources
+            docker builder prune -af
+            docker image prune -af
+
+            # Keep system logs from growing too much
+            sudo journalctl --vacuum-size=100M || true
+
+            echo "Disk usage after cleanup:"
+            df -h /
+
+            cd ~/flowdesk-bck
+
             git pull origin main
+
             docker-compose up --build -d
+
+            echo "Running containers:"
+            docker ps
+
+            echo "Disk usage after deploy:"
+            df -h /
