@@ -1,4 +1,5 @@
 import json
+import os
 import httpx
 import pytest
 from app.integrations.zai import ZAIAnalysisProvider
@@ -107,3 +108,28 @@ def test_zai_provider_rejects_invalid_model_response(body):
 
     assert error.value.status_code == 502
     assert error.value.code == "invalid_ai_response"
+
+@pytest.mark.skipif(
+    os.getenv("RUN_ZAI_INTEGRATION_TEST") != "1" or not os.getenv("ZAI_API_KEY"),
+    reason="requires RUN_ZAI_INTEGRATION_TEST=1 and a real ZAI_API_KEY",
+)
+def test_live_zai_provider_returns_valid_structured_analysis():
+    provider = ZAIAnalysisProvider(
+        api_key=os.environ["ZAI_API_KEY"],
+        model=os.getenv("ZAI_MODEL", "glm-5.3-flash"),
+        base_url=os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
+        timeout_seconds=float(os.getenv("ZAI_TIMEOUT_SECONDS", "30")),
+    )
+
+    result = provider.generate(
+        request=IntelligentAnalysisRequest(question="Resume el estado del inventario."),
+        context={
+            "scope": "inventory",
+            "inventory_metrics": {"stock_bajo": 1, "sin_stock": 0},
+            "data_limitations": [],
+        },
+    )
+
+    assert result["summary"]
+    assert isinstance(result["insights"], list)
+    assert isinstance(result["recommendations"], list)

@@ -47,7 +47,7 @@ def test_context_is_bounded_sanitized_and_json_safe(monkeypatch):
         db=object(),
     )
 
-    assert context["context_version"] == "1.0"
+    assert context["context_version"] == "2.0"
     assert context["inventory_metrics"]["net_movement"] == 5.25
     assert context["inventory_metrics"]["products_requiring_attention"] == 3
     assert len(context["products_at_risk"]) == 5
@@ -56,6 +56,60 @@ def test_context_is_bounded_sanitized_and_json_safe(monkeypatch):
     assert "company" not in context
     assert "schema_name" not in context
     json.dumps(context)
+
+def test_business_context_combines_inventory_sales_and_catalog(monkeypatch):
+    resolved_date = date(2026, 9, 2)
+    monkeypatch.setattr(
+        analysis_context.inventory_service,
+        "get_inventory_metrics",
+        lambda *_args, **_kwargs: {
+            "start_date": resolved_date,
+            "end_date": resolved_date,
+            "entradas": 3,
+            "salidas": 1,
+            "stock_bajo": 0,
+            "sin_stock": 0,
+        },
+    )
+    monkeypatch.setattr(
+        analysis_context.inventory_service,
+        "get_product_analytics",
+        lambda *_args, **_kwargs: {"products": []},
+    )
+    monkeypatch.setattr(
+        analysis_context.inventory_service,
+        "get_inventory_trend",
+        lambda *_args, **_kwargs: {"points": []},
+    )
+    monkeypatch.setattr(
+        analysis_context.analytics_service,
+        "get_sales_metrics",
+        lambda *_args, **_kwargs: {"start_date": resolved_date, "end_date": resolved_date, "net_sales": 25},
+    )
+    monkeypatch.setattr(
+        analysis_context.analytics_service,
+        "get_sales_trend",
+        lambda *_args, **_kwargs: {"points": []},
+    )
+    monkeypatch.setattr(
+        analysis_context.analytics_service,
+        "get_top_selling_products",
+        lambda *_args, **_kwargs: {"products": [{"sku": "SKU-1"}]},
+    )
+    monkeypatch.setattr(
+        analysis_context.analytics_service,
+        "get_product_creation_trend",
+        lambda *_args, **_kwargs: {"total_created": 1, "points": []},
+    )
+
+    context = analysis_context.build_business_context(
+        IntelligentAnalysisRequest(scope="business"), object(), object()
+    )
+
+    assert context["available_domains"] == ["inventory", "sales", "catalog"]
+    assert context["sales_metrics"]["net_sales"] == 25
+    assert context["top_selling_products"][0]["sku"] == "SKU-1"
+    assert context["catalog_creation_trend"]["total_created"] == 1
 
 @pytest.mark.parametrize(
     ("analysis_request", "expected"),

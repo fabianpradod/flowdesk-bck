@@ -1,7 +1,9 @@
 import json
 from datetime import date
 from decimal import Decimal
+from uuid import uuid4
 import pytest
+from pydantic import ValidationError
 from app.schemas.intelligence import IntelligentAnalysisRequest
 from app.services import analysis_context, intelligence as intelligence_service
 from app.utils.exceptions import AppError
@@ -103,6 +105,13 @@ def test_request_normalizes_question():
 
     assert request.question == "¿Qué requiere atención?"
 
+def test_request_rejects_client_filter_for_final_consumer():
+    with pytest.raises(ValidationError):
+        IntelligentAnalysisRequest(
+            client_id=uuid4(),
+            customer_type="final_consumer",
+        )
+
 def test_provider_dependency_reports_not_configured(monkeypatch):
     monkeypatch.setattr(intelligence_service, "ZAI_API_KEY", None)
 
@@ -111,7 +120,6 @@ def test_provider_dependency_reports_not_configured(monkeypatch):
 
     assert error.value.status_code == 503
     assert error.value.code == "ai_provider_unavailable"
-
 
 def test_provider_dependency_builds_zai_provider(monkeypatch):
     monkeypatch.setattr(intelligence_service, "ZAI_API_KEY", "secret")
