@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -70,3 +71,45 @@ class ClientResponse(ClientBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SaleItemCreate(BaseModel):
+    producto_id: UUID
+    cantidad: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+
+
+class SaleCreate(BaseModel):
+    cliente_id: UUID | None = None
+    items: list[SaleItemCreate] = Field(min_length=1, max_length=100)
+    descuento: Decimal = Field(default=Decimal("0"), ge=0, max_digits=10, decimal_places=2)
+    impuesto: Decimal = Field(default=Decimal("0"), ge=0, max_digits=10, decimal_places=2)
+
+    @model_validator(mode="after")
+    def reject_duplicate_products(self):
+        product_ids = [item.producto_id for item in self.items]
+        if len(product_ids) != len(set(product_ids)):
+            raise ValueError("Each product may appear only once per sale")
+        return self
+
+
+class SaleItemResponse(BaseModel):
+    id: UUID
+    producto_id: UUID
+    cantidad: Decimal
+    precio_unitario: Decimal
+    subtotal: Decimal
+
+
+class SaleResponse(BaseModel):
+    id: UUID
+    usuario_id: UUID
+    cliente_id: UUID | None
+    consumidor_final: bool
+    cliente_nombre: str | None = None
+    fecha: datetime
+    subtotal: Decimal
+    descuento: Decimal
+    impuesto: Decimal
+    total: Decimal
+    estado: str
+    items: list[SaleItemResponse]
