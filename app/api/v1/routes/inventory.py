@@ -315,8 +315,8 @@ def list_supplier_products(
     return inventory_service.list_supplier_products(
         current_user,
         db,
-        product_id=product_id,
-        supplier_id=supplier_id,
+        producto_id=product_id,
+        proveedor_id=supplier_id,
         search=search,
         active_only=active_only,
     )

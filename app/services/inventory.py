@@ -397,7 +397,19 @@ def list_supplier_products(
     )
 
     query = (
-        select(supplier_products)
+        select(
+            suppliers.c.id.label("supplier_id"),
+            suppliers.c.nombre.label("supplier_name"),
+            suppliers.c.correo.label("supplier_email"),
+            suppliers.c.telefono.label("supplier_phone"),
+            products.c.id.label("product_id"),
+            products.c.sku.label("product_sku"),
+            products.c.nombre.label("product_name"),
+            products.c.descripcion.label("product_description"),
+            supplier_products.c.precio_cotizacion.label("quotation"),
+            products.c.is_active.label("product_active"),
+            suppliers.c.is_active.label("supplier_active"),
+        )
         .select_from(
             supplier_products
             .join(
@@ -423,7 +435,9 @@ def list_supplier_products(
 
     if active_only:
         query = query.where(
-            supplier_products.c.is_active.is_(True)
+            supplier_products.c.is_active.is_(True),
+            suppliers.c.is_active.is_(True),
+            products.c.is_active.is_(True),
         )
 
     if search:
