@@ -16,6 +16,7 @@ from app.services.inventory import (
 )
 from app.utils.csv_report import render_csv
 from app.utils.exceptions import AppError
+from app.utils.logger import logger
 from app.utils.pdf_report import render_pdf
 
 INVENTORY_COLUMNS = [
@@ -361,4 +362,5 @@ def _record_generation(
         db.commit()
     except Exception as e:
         db.rollback()
-        raise AppError(500, f"Failed to record report generation: {str(e)}")
+        logger.exception("Failed to record report generation: %s", e)
+        raise AppError(500, "Failed to record report generation")

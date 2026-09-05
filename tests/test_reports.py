@@ -22,7 +22,7 @@ from app.services.reports import (
     list_report_history,
 )
 from app.utils.csv_report import escape_formula, render_csv
-from app.utils.exceptions import AppError
+from app.utils.exceptions import AppError, build_error_payload
 from app.utils.pdf_report import render_pdf
 
 
@@ -513,6 +513,23 @@ class ReportGenerationTests(unittest.TestCase):
 
         self.assertEqual(error.exception.status_code, 500)
         self.assertEqual(db.rollbacks, 1)
+
+    def test_the_audit_failure_does_not_leak_the_database_error(self):
+        leak = 'relation "tenant_xxx.reporte" does not exist'
+
+        class FailingDB(FakeDB):
+            def execute(self, statement):
+                raise RuntimeError(leak)
+
+        db = FailingDB()
+
+        with self.assertRaises(AppError) as error:
+            generate_report(make_dataset(), make_user(), db, report_type="inventario", report_format="csv")
+
+        payload = build_error_payload(error.exception)
+        self.assertEqual(payload["message"], "Failed to record report generation")
+        self.assertNotIn(leak, payload["message"])
+        self.assertNotIn("reporte", payload["message"])
 
     def test_the_filename_carries_the_type_and_extension(self):
         self.assertTrue(build_filename("movimientos", "pdf").startswith("reporte_movimientos_"))
