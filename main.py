@@ -11,6 +11,7 @@ from app.api.v1.routes.users import router as users_router
 from app.api.v1.routes.roles import router as roles_router
 from app.api.v1.routes.inventory import router as inventory_router
 from app.api.v1.routes.commercial import router as commercial_router
+from app.api.v1.routes.reports import router as reports_router
 from app.api.v1.routes.tasks import router as tasks_router
 from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.system import router as system_router
@@ -71,6 +72,7 @@ app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(inventory_router)
 app.include_router(commercial_router)
+app.include_router(reports_router)
 app.include_router(tasks_router)
 app.include_router(companies_router)
 app.include_router(system_router)

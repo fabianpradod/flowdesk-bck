@@ -66,6 +66,31 @@ La especificación completa está en `/docs`. Estos son los grupos principales:
 - `/api/v1/inventory`: productos, proveedores, movimientos y analítica.
 - `/api/v1/commercial`: clientes.
 - `/api/v1/tasks`: tareas personales del usuario autenticado.
+- `/api/v1/reports`: reportes de inventario, movimientos y alertas.
+
+### Reportes — `/api/v1/reports`
+
+Todos los endpoints de reportes requieren rol admin o superior.
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/history` | Historial de reportes generados. `?limit=` entre 1 y 100 (default 20) |
+| GET | `/inventario` | Stock actual. Filtros `?product_id=`, `?is_active=`, `?only_low_stock=` |
+| GET | `/movimientos` | Movimientos del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?product_id=`, `?movement_type=` |
+| GET | `/alertas` | Alertas del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?open_only=` |
+
+Los tres reportes aceptan `?format=csv` (default) o `?format=pdf` y responden con el
+archivo como descarga (`Content-Disposition: attachment`), no con JSON.
+
+`period` acepta `7d`, `30d` (default), `90d`, `6m`, `12m`, `ytd` o `custom`; con `custom` hay
+que enviar `start_date` y `end_date`, de lo contrario la API responde 400.
+
+Cada generación queda registrada en la tabla `reporte` del esquema de la empresa y se
+consulta con `GET /history`. El archivo no se almacena en el servidor — se transmite
+directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
+
+El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
+empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
 
 ### Tareas
 
