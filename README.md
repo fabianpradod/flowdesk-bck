@@ -56,6 +56,62 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 
 No suba `.env` al repositorio. `.env.example` solo contiene valores de ejemplo.
 
+## Matriz de permisos
+
+Cuatro roles, jerárquicos: `employee` < `manager` < `admin` < `superadmin`.
+Cada nivel hereda todo lo del anterior.
+
+| Rol | Alcance |
+|---|---|
+| `employee` | Lectura de todo el tenant y CRUD de sus propias tareas |
+| `manager` | Además: crear y editar productos, proveedores y clientes; movimientos; importaciones; ventas |
+| `admin` | Además: desactivar y eliminar registros; gestión de usuarios y roles; reportes |
+| `superadmin` | Además: registro de empresas y consultas entre empresas |
+
+Detalle por endpoint. «Autenticado» significa cualquier usuario con sesión
+válida, es decir también `employee`.
+
+| Endpoint | Rol mínimo |
+|---|---|
+| `POST /api/v1/auth/login`, `/password/*` | Público |
+| `GET /health`, `GET /ready` | Público |
+| `POST /api/v1/auth/register` | `superadmin` estricto |
+| `GET /api/v1/companies` | `superadmin` estricto |
+| `POST /api/v1/auth/employees`, `GET /api/v1/auth/employees` | `admin` |
+| `POST /api/v1/auth/invitations/resend` | `admin` |
+| `GET/PUT/PATCH/DELETE /api/v1/users/*` | `admin` |
+| `GET /api/v1/roles` | `admin` |
+| `GET /api/v1/reports/*` | `admin` |
+| `GET /api/v1/inventory/products`, `/suppliers`, `/movements`, `/alerts` | Autenticado |
+| `GET /api/v1/inventory/suppliers/{id}`, `/supplier-products` | Autenticado |
+| `GET /api/v1/inventory/analytics/*`, `/metrics`, `/history` | `manager` |
+| `POST /api/v1/inventory/products`, `/suppliers`, `/movements`, `/products/import` | `manager` |
+| `PUT /api/v1/inventory/suppliers/{id}` | `manager` |
+| `PATCH /api/v1/inventory/products/{id}/status`, `/suppliers/{id}/status` | `admin` |
+| `DELETE /api/v1/inventory/suppliers/{id}` | `admin` |
+| `GET /api/v1/commercial/clients`, `/clients/{id}` | Autenticado |
+| `GET /api/v1/commercial/sales/{id}`, `/clients/{id}/purchases` | Autenticado |
+| `POST /api/v1/commercial/clients`, `/sales` | `manager` |
+| `PUT /api/v1/commercial/clients/{id}` | `manager` |
+| `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
+| `DELETE /api/v1/commercial/clients/{id}` | `admin` |
+| `GET/POST/PUT/PATCH/DELETE /api/v1/tasks/*` | Autenticado, y solo sobre tareas propias |
+
+Dos reglas del dependency que conviene tener presentes:
+
+- `require_role("manager")` admite además `admin` y `superadmin`, porque
+  `ELEVATED_ROLES` pasa por encima de cualquier lista de roles. Es lo que hace
+  que la jerarquía funcione sin enumerar roles en cada endpoint.
+- Por lo anterior, `require_role("superadmin")` **no** restringe a superadmin:
+  un `admin` también pasa. Para eso está `require_role("superadmin",
+  strict=True)`, que compara contra la lista exacta y no aplica la jerarquía.
+- `require_role()` sin argumentos deja pasar a cualquier usuario autenticado.
+  Es intencional para las lecturas del tenant, pero no es un guard de rol.
+
+Las restricciones por empresa son independientes del rol: `get_user_schema_name`
+resuelve el esquema desde `current_user.company`, así que ningún endpoint de
+inventario o comercial puede leer datos de otro tenant, sea cual sea su rol.
+
 ## Contrato consumido por frontend
 
 La especificación completa está en `/docs`. Estos son los grupos principales:
