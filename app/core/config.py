@@ -22,6 +22,20 @@ SUPERADMIN_USERNAME: str = os.getenv("SUPERADMIN_USERNAME")
 # File upload
 MAX_IMPORT_FILE_SIZE = 5 * 1024 * 1024
 
+# HTTPS / transport security
+def _flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).lower() in {"1", "true", "yes"}
+
+def _csv(name: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+# Off by default so local development and the test suite stay on plain HTTP.
+FORCE_HTTPS: bool = _flag("FORCE_HTTPS")
+# Hosts accepted in the Host header. Empty disables the check.
+ALLOWED_HOSTS: list[str] = _csv("ALLOWED_HOSTS")
+# Seconds advertised in Strict-Transport-Security. Two years is the preload floor.
+HSTS_MAX_AGE: int = int(os.getenv("HSTS_MAX_AGE", "63072000"))
+
 # Email
 FRONTEND_URL: str = os.getenv("FRONTEND_URL")
 SMTP_USERNAME: str = os.getenv("SMTP_USERNAME")
