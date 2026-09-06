@@ -198,7 +198,7 @@ def test_list_clients_can_include_inactive_clients():
     list_clients(
         make_user(),
         db,
-        active_only=False,
+        is_active=None,
     )
 
     statement = db.statements[0]
@@ -314,8 +314,9 @@ def test_update_client_status_updates_status():
     client = make_client(is_active=True)
 
     db = FakeDB([
-        [client],
-        [client],
+        [client],   # fetch current
+        [],         # pending sales guard
+        [client],   # update ... returning
     ])
 
     result = update_client_status(
@@ -328,7 +329,7 @@ def test_update_client_status_updates_status():
     assert result == client
     assert db.commits == 1
 
-    assert written_columns(db.statements[1]) == {
+    assert written_columns(db.statements[2]) == {
         "is_active",
         "updated_at",
     }
@@ -352,7 +353,8 @@ def test_delete_client_soft_deletes():
     client = make_client()
 
     db = FakeDB([
-        [client],
+        [client],   # exists check
+        [],         # pending sales guard
     ])
 
     result = delete_client(
@@ -364,7 +366,7 @@ def test_delete_client_soft_deletes():
     assert result is None
     assert db.commits == 1
 
-    params = db.statements[1].compile().params
+    params = db.statements[2].compile().params
 
     assert params["is_active"] is False
 

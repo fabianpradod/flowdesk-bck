@@ -78,6 +78,27 @@ def commercial_db(monkeypatch):
         ),
     )
 
+    sales = Table(
+        "venta",
+        metadata,
+        __import__("sqlalchemy").Column(
+            "id",
+            UUIDString(),
+            primary_key=True,
+        ),
+        __import__("sqlalchemy").Column(
+            "cliente_id",
+            UUIDString(),
+            nullable=True,
+        ),
+        __import__("sqlalchemy").Column(
+            "estado",
+            String(20),
+            nullable=False,
+            default="borrador",
+        ),
+    )
+
     metadata.create_all(engine)
 
     SessionLocal = sessionmaker(
@@ -94,11 +115,28 @@ def commercial_db(monkeypatch):
         "_clients_table",
         lambda _current_user: clients,
     )
+    monkeypatch.setattr(
+        commercial_service,
+        "_tenant_tables",
+        lambda _current_user: {"cliente": clients, "venta": sales},
+    )
 
     yield db, clients, current_user
 
     db.close()
     engine.dispose()
+
+def _insert_sale(db, client_id, estado="borrador"):
+    sales = commercial_service._tenant_tables(None)["venta"]
+    db.execute(
+        insert(sales).values(
+            id=str(uuid4()),
+            cliente_id=str(client_id),
+            estado=estado,
+        )
+    )
+    db.commit()
+
 
 def _insert_client(
     db,
@@ -175,7 +213,7 @@ def test_list_clients_includes_inactive_when_requested(commercial_db):
     result = commercial_service.list_clients(
         user,
         db,
-        active_only=False,
+        is_active=None,
     )
 
     assert len(result) == 2
@@ -586,3 +624,131 @@ def test_ensure_client_exists_failure(commercial_db):
         )
 
     assert exc.value.status_code == 404
+
+
+# ─── relation guards before deactivating ──────────────────────────────────────
+
+def test_deactivating_is_refused_while_a_sale_is_still_a_draft(commercial_db):
+    db, clients, user = commercial_db
+    client_id = _insert_client(db)
+    _insert_sale(db, client_id, estado="borrador")
+
+    with pytest.raises(AppError) as exc:
+        commercial_service.update_client_status(
+            client_id,
+            False,
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 400
+    assert "pending" in exc.value.message.lower()
+
+def test_a_completed_sale_does_not_block_deactivation(commercial_db):
+    """Keeping the history is the point of the soft delete."""
+    db, clients, user = commercial_db
+    client_id = _insert_client(db)
+    _insert_sale(db, client_id, estado="completada")
+
+    result = commercial_service.update_client_status(
+        client_id,
+        False,
+        user,
+        db,
+    )
+
+    assert result["is_active"] is False
+
+def test_deleting_is_refused_while_a_sale_is_still_a_draft(commercial_db):
+    db, clients, user = commercial_db
+    client_id = _insert_client(db)
+    _insert_sale(db, client_id, estado="borrador")
+
+    with pytest.raises(AppError) as exc:
+        commercial_service.delete_client(
+            client_id,
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 400
+
+# ─── a deactivated client no longer reserves its name ─────────────────────────
+
+def test_a_deactivated_client_frees_its_name(commercial_db):
+    db, clients, user = commercial_db
+    _insert_client(
+        db,
+        nombre="Acme",
+        correo="acme@test.com",
+        is_active=False,
+    )
+
+    created = commercial_service.create_client(
+        ClientCreate(nombre="Acme", correo="acme@test.com"),
+        user,
+        db,
+    )
+
+    assert created["nombre"] == "Acme"
+
+def test_an_active_client_still_reserves_its_name(commercial_db):
+    db, clients, user = commercial_db
+    _insert_client(
+        db,
+        nombre="Acme",
+        correo="other@test.com",
+        is_active=True,
+    )
+
+    with pytest.raises(AppError) as exc:
+        commercial_service.create_client(
+            ClientCreate(nombre="Acme"),
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 400
+
+def test_reactivating_is_refused_when_the_name_was_taken(commercial_db):
+    db, clients, user = commercial_db
+    inactive_id = _insert_client(
+        db,
+        nombre="Acme",
+        correo="acme.old@test.com",
+        is_active=False,
+    )
+    _insert_client(
+        db,
+        nombre="Acme",
+        correo="acme.new@test.com",
+        is_active=True,
+    )
+
+    with pytest.raises(AppError) as exc:
+        commercial_service.update_client_status(
+            inactive_id,
+            True,
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 400
+    assert "name" in exc.value.message.lower()
+
+def test_reactivating_succeeds_when_the_name_is_still_free(commercial_db):
+    db, clients, user = commercial_db
+    client_id = _insert_client(
+        db,
+        nombre="Acme",
+        is_active=False,
+    )
+
+    result = commercial_service.update_client_status(
+        client_id,
+        True,
+        user,
+        db,
+    )
+
+    assert result["is_active"] is True
