@@ -194,8 +194,8 @@ def test_duplicate_username(client):
 
     assert response.status_code == 400
 
-def test_superadmin_can_create_company(client):
-    response = client.post(
+def test_superadmin_can_create_company(superadmin_client):
+    response = superadmin_client.post(
         "/api/v1/auth/register",
         json={
             "name": "Test Company",

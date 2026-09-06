@@ -23,12 +23,18 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
     responses = {
         201: {"description": "Empresa creada"},
         400: {"description": "Email o username ya registrado"},
+        401: {"description": "No autenticado"},
+        403: {"description": "Sin permisos"},
         500: {"description": "Error interno"},
     },
     status_code = 201,
 )
-def create_company(data: CompanyCreate, db: Session = Depends(get_db)):
-    """Crea una nueva empresa junto con su usuario administrador y su esquema de base de datos. Solo accesible para superadmin."""
+def create_company(
+    data: CompanyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("superadmin", strict=True)),
+):
+    """Crea una nueva empresa junto con su usuario administrador y su esquema de base de datos. Solo accesible para superadmin: un admin no pasa."""
     return auth_service.register_company(data, db)
 
 

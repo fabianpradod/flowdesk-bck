@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.dependencies.auth import get_current_user, get_db
+from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.commercial import router as commercial_router
 from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.inventory import router as inventory_router
@@ -99,19 +100,29 @@ def user_with_role(role_name):
     )
 
 
-def client_as(role_name, *routers):
+def build_app(*routers):
+    """A minimal app carrying the same error handler main.py installs, so the
+    response body matches production rather than Starlette's default."""
     app = FastAPI()
     for router in routers or (commercial_router,):
         app.include_router(router)
 
-    # Same handler main.py installs, so the error body matches production.
     @app.exception_handler(StarletteHTTPException)
     async def _handler(_request: Request, exc: StarletteHTTPException):
         return JSONResponse(status_code=exc.status_code, content=build_error_payload(exc))
 
     app.dependency_overrides[get_db] = lambda: FakeDB()
+    return app
+
+
+def client_as(role_name, *routers):
+    app = build_app(*routers)
     app.dependency_overrides[get_current_user] = lambda: user_with_role(role_name)
     return TestClient(app, raise_server_exceptions=False)
+
+
+def anonymous_client(*routers):
+    return TestClient(build_app(*routers), raise_server_exceptions=False)
 
 
 def forbidden(response) -> bool:
@@ -289,3 +300,62 @@ def test_product_and_supplier_deactivation_is_refused_below_admin(role):
     assert session.delete(
         f"/api/v1/inventory/suppliers/{uuid4()}"
     ).status_code == 403
+
+
+# ─── company registration is a superadmin action ──────────────────────────────
+
+REGISTRATION = {
+    "name": "Empresa Nueva",
+    "admin_username": "nuevo_admin",
+    "admin_email": "nuevo.admin@test.com",
+}
+
+
+@pytest.mark.parametrize("role", ["employee", "manager", "admin"])
+def test_registering_a_company_is_refused_below_superadmin(role):
+    response = client_as(role, auth_router).post(
+        "/api/v1/auth/register", json=REGISTRATION
+    )
+
+    assert response.status_code == 403
+
+
+def test_registering_a_company_is_allowed_for_superadmin():
+    response = client_as("superadmin", auth_router).post(
+        "/api/v1/auth/register", json=REGISTRATION
+    )
+
+    assert not forbidden(response)
+
+
+def test_registering_a_company_requires_authentication():
+    """It used to be wide open, despite the docstring saying superadmin only."""
+    response = anonymous_client(auth_router).post(
+        "/api/v1/auth/register", json=REGISTRATION
+    )
+
+    assert response.status_code == 401
+
+
+def test_login_and_password_recovery_stay_public():
+    """Login also answers 401, so compare the reason rather than the status."""
+    session = anonymous_client(auth_router)
+
+    login = session.post(
+        "/api/v1/auth/login", json={"email": "a@test.com", "password": "x"}
+    )
+    assert login.json()["message"] == "Invalid credentials"
+
+    assert session.post(
+        "/api/v1/auth/password/forgot", json={"email": "a@test.com"}
+    ).status_code != 401
+
+
+def test_no_security_scheme_is_attached_to_the_public_auth_routes():
+    schema = build_app(auth_router).openapi()
+
+    public = ["/api/v1/auth/login", "/api/v1/auth/password/forgot", "/api/v1/auth/password/reset"]
+    for path in public:
+        assert "security" not in schema["paths"][path]["post"], path
+
+    assert "security" in schema["paths"]["/api/v1/auth/register"]["post"]
