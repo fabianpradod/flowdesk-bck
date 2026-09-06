@@ -65,6 +65,10 @@ PERIOD_DAYS = {
 
 MAX_IMPORT_ROWS = 5000
 
+# Upper bounds of the Numeric(precision, scale) columns these values land in.
+MAX_MONEY = Decimal("99999999.99")       # Numeric(10, 2)
+MAX_QUANTITY = Decimal("9999999999.99")  # Numeric(12, 2)
+
 def _validate_csv_injection(value: str, row: int, column: str, errors: list[dict]):
     if isinstance(value, str):
         if value.startswith(("=", "+", "-", "@")):
@@ -75,12 +79,46 @@ def _validate_csv_injection(value: str, row: int, column: str, errors: list[dict
                 "message": "Potential CSV injection detected"
             })
 
+IMPORT_READ_CHUNK = 64 * 1024
+
+
 def _validate_import_size(raw_rows: list[dict]):
     if len(raw_rows) > MAX_IMPORT_ROWS:
         raise ProductImportError(
             "Import exceeds maximum allowed rows",
             "import_too_large",
             []
+        )
+
+
+def read_import_upload(file: UploadFile) -> bytes:
+    """Read an upload in chunks, refusing it as soon as it passes the limit.
+
+    The route used to call file.file.read(), which buffers the whole upload
+    before anything checks its size, so the documented 5MB cap protected
+    nothing. Stopping at the first chunk that crosses the limit means an
+    oversized file is never held in memory in full.
+    """
+    chunks = []
+    total = 0
+    while chunk := file.file.read(IMPORT_READ_CHUNK):
+        total += len(chunk)
+        if total > MAX_IMPORT_FILE_SIZE:
+            raise ProductImportError(
+                f"Import file exceeds the {MAX_IMPORT_FILE_SIZE} byte limit",
+                "file_too_large",
+                [],
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _validate_import_file_size(content: bytes) -> None:
+    if len(content) > MAX_IMPORT_FILE_SIZE:
+        raise ProductImportError(
+            f"Import file exceeds the {MAX_IMPORT_FILE_SIZE} byte limit",
+            "file_too_large",
+            [],
         )
 
 def list_suppliers(
@@ -620,6 +658,8 @@ def parse_product_import_file(filename: str, content: bytes) -> list[dict]:
     if not content:
         raise ProductImportError("Import file is empty", "empty_file", [])
 
+    _validate_import_file_size(content)
+
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if extension == "csv":
         raw_rows = _read_csv_rows(content)
@@ -773,8 +813,8 @@ def _normalize_product_import_rows(raw_rows: list[dict]) -> list[dict]:
             "sku": sku,
             "nombre": nombre,
             "descripcion": _clean_optional_text(row.get("descripcion")),
-            "precio_venta": _parse_nonnegative_decimal(row.get("precio_venta"), "precio_venta", index, errors),
-            "stock_minimo": _parse_nonnegative_decimal(row.get("stock_minimo"), "stock_minimo", index, errors),
+            "precio_venta": _parse_nonnegative_decimal(row.get("precio_venta"), "precio_venta", index, errors, MAX_MONEY),
+            "stock_minimo": _parse_nonnegative_decimal(row.get("stock_minimo"), "stock_minimo", index, errors, MAX_QUANTITY),
             "unidad_medida": _clean_text(row.get("unidad_medida")) or "unidad",
             "proveedor_id": _parse_optional_uuid(row.get("proveedor_id"), "proveedor_id", index, errors),
         }
@@ -802,7 +842,7 @@ def _clean_optional_text(value) -> str | None:
     return cleaned or None
 
 
-def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict]) -> Decimal:
+def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict], max_value: Decimal) -> Decimal:
     cleaned = _clean_text(value)
     if not cleaned:
         return Decimal("0")
@@ -811,8 +851,18 @@ def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict])
     except (InvalidOperation, ValueError):
         errors.append({"row": row, "column": column, "code": "invalid_decimal", "message": "Value must be numeric"})
         return Decimal("0")
+    # NaN and Infinity parse fine but raise InvalidOperation on comparison.
+    if not parsed.is_finite():
+        errors.append({"row": row, "column": column, "code": "invalid_decimal", "message": "Value must be a finite number"})
+        return Decimal("0")
     if parsed < Decimal("0"):
         errors.append({"row": row, "column": column, "code": "negative_decimal", "message": "Value must be non-negative"})
+        return Decimal("0")
+    if parsed > max_value:
+        errors.append({"row": row, "column": column, "code": "decimal_too_large", "message": f"Value must not exceed {max_value}"})
+        return Decimal("0")
+    if -parsed.as_tuple().exponent > 2:
+        errors.append({"row": row, "column": column, "code": "too_many_decimals", "message": "Value must have at most 2 decimal places"})
         return Decimal("0")
     return parsed
 

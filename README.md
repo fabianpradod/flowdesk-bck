@@ -56,6 +56,34 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 
 No suba `.env` al repositorio. `.env.example` solo contiene valores de ejemplo.
 
+## HTTPS en producción
+
+Todo el endurecimiento de transporte está apagado por defecto, para que el
+desarrollo local y las pruebas sigan funcionando sobre HTTP plano. Se enciende
+por variables de entorno.
+
+| Variable | Efecto |
+|---|---|
+| `FORCE_HTTPS` | Redirige HTTP a HTTPS y envía `Strict-Transport-Security` |
+| `ALLOWED_HOSTS` | Lista separada por comas de hosts aceptados. Vacío desactiva la validación |
+| `HSTS_MAX_AGE` | Duración de HSTS en segundos. Por defecto 63072000, dos años |
+
+Las cabeceras `X-Content-Type-Options`, `X-Frame-Options` y `Referrer-Policy`
+se envían siempre, con o sin TLS.
+
+Dos detalles que importan al desplegar:
+
+- **HSTS solo sale con `FORCE_HTTPS` encendido.** Enviarlo mientras el sitio
+  todavía responde por HTTP deja al navegador negándose a abrir el host por
+  `http://`, y eso no se revierte desde el servidor.
+- **Detrás de un proxy que termina TLS, uvicorn necesita `--proxy-headers`.**
+  Sin eso ve HTTP plano, no reconoce `X-Forwarded-Proto` y la redirección entra
+  en bucle. El `CMD` del Dockerfile ya lo pasa, junto con
+  `--forwarded-allow-ips`.
+
+Activar `ALLOWED_HOSTS` antes de exponer el servicio: sin lista, el host del
+request no se valida.
+
 ## Matriz de permisos
 
 Cuatro roles, jerárquicos: `employee` < `manager` < `admin` < `superadmin`.
