@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.base import StrippedModel
+
 class MovementType(str, Enum):
     ENTRADA_COMPRAS = "entrada_compra"
     ENTRADA_MANUAL = "entrada_manual"
@@ -28,13 +30,13 @@ ProductAnalyticsSort = Literal[
 ]
 
 
-class SupplierCreate(BaseModel):
+class SupplierCreate(StrippedModel):
     nombre: str = Field(min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
     correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
-class SupplierUpdate(BaseModel):
+class SupplierUpdate(StrippedModel):
     nombre: str | None = Field(default=None, min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
     correo: EmailStr | None = Field(default=None, max_length=150)
@@ -55,7 +57,7 @@ class SupplierResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-class SupplierProductCreate(BaseModel):
+class SupplierProductCreate(StrippedModel):
     proveedor_id: UUID
     producto_id: UUID
     precio_cotizacion: Decimal = Field(
@@ -67,7 +69,7 @@ class SupplierProductCreate(BaseModel):
         max_length=1000,
     )
 
-class SupplierProductUpdate(BaseModel):
+class SupplierProductUpdate(StrippedModel):
     precio_cotizacion: Decimal | None = Field(
         default=None,
         ge=0,
@@ -98,7 +100,7 @@ class SupplierProductResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProductCreate(BaseModel):
+class ProductCreate(StrippedModel):
     sku: str = Field(min_length=1, max_length=50)
     nombre: str = Field(min_length=1, max_length=100)
     descripcion: str | None = None
@@ -129,7 +131,7 @@ class ProductStatusUpdate(BaseModel):
     is_active: bool
 
 
-class InventoryMovementCreate(BaseModel):
+class InventoryMovementCreate(StrippedModel):
     producto_id: UUID
     tipo_movimiento: MovementType
     cantidad: Decimal = Field(gt=0, decimal_places=2)
