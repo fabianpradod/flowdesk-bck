@@ -55,6 +55,20 @@ def test_client_table_has_case_insensitive_unique_indexes():
     assert indexes["uq_cliente_correo_ci"].unique is True
 
 
+def test_the_unique_indexes_only_cover_active_clients():
+    """A deactivated client keeps its history but must release its name."""
+    metadata = build_tenant_metadata(SCHEMA_NAME)
+    clients = metadata.tables[f"{SCHEMA_NAME}.cliente"]
+    indexes = {index.name: index for index in clients.indexes}
+
+    name_where = str(indexes["uq_cliente_nombre_ci"].dialect_options["postgresql"]["where"])
+    email_where = str(indexes["uq_cliente_correo_ci"].dialect_options["postgresql"]["where"])
+
+    assert name_where == "is_active"
+    assert "is_active" in email_where
+    assert "correo IS NOT NULL" in email_where
+
+
 def test_create_rejects_client_name_with_different_case():
     db = DB([[{"id": uuid4(), "nombre": "ACME", "correo": None}]])
     with pytest.raises(AppError, match="Client name already exists"):
