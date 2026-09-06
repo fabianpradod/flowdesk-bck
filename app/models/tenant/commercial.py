@@ -8,13 +8,20 @@ from app.models.tenant.base import Base, TENANT_SCHEMA
 
 class Cliente(Base):
     __tablename__ = "cliente"
+    # Scoped to active rows: a deactivated client keeps its history but must not
+    # reserve its name or email forever. Suppliers already worked this way.
     __table_args__ = (
-        Index("uq_cliente_nombre_ci", text("lower(nombre)"), unique=True),
+        Index(
+            "uq_cliente_nombre_ci",
+            text("lower(nombre)"),
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
         Index(
             "uq_cliente_correo_ci",
             text("lower(correo)"),
             unique=True,
-            postgresql_where=text("correo IS NOT NULL"),
+            postgresql_where=text("correo IS NOT NULL AND is_active"),
         ),
         {"schema": TENANT_SCHEMA},
     )

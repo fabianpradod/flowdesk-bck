@@ -21,16 +21,35 @@ router = APIRouter(prefix="/api/v1/commercial", tags=["commercial"])
 @router.get("/clients", response_model=list[ClientResponse], summary="Listar clientes")
 def clients(
     search: str | None = Query(default=None),
-    active_only: bool = Query(default=True),
+    is_active: bool | None = Query(
+        default=None,
+        description="Filtra por estado. Omitirlo conserva el comportamiento histórico de active_only.",
+    ),
+    active_only: bool = Query(
+        default=True,
+        deprecated=True,
+        description="Alias histórico. Usar ?is_active= en su lugar; active_only=false equivale a no filtrar.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role()),
 ):
-    """Retorna los clientes del esquema de la empresa autenticada. Permite buscar por nombre, correo o teléfono."""
+    """Retorna los clientes del esquema de la empresa autenticada. Permite buscar por nombre, correo o teléfono.
+
+    Filtrable por estado con ?is_active=, igual que proveedores. Sin ese parámetro
+    se aplica active_only, que por defecto muestra solo los activos.
+    """
+    if is_active is None and not active_only:
+        state = None
+    elif is_active is None:
+        state = True
+    else:
+        state = is_active
+
     return commercial_service.list_clients(
         current_user,
         db,
         search=search,
-        active_only=active_only,
+        is_active=state,
     )
 
 

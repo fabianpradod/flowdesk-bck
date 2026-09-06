@@ -315,7 +315,8 @@ def test_deactivates_when_no_active_product_references_supplier():
 def test_reactivating_skips_active_products_check():
     db = FakeDB([
         [make_supplier(is_active=False)],
-        [],
+        [],  # name availability guard
+        [],  # update
         [make_supplier(is_active=True)],
     ])
 
@@ -407,3 +408,40 @@ def test_queries_are_scoped_to_company_schema():
     list_suppliers(make_user(), db,)
 
     assert SCHEMA_NAME in str(db.statements[0])
+
+
+def test_reactivating_is_refused_when_the_name_was_taken():
+    """Only active suppliers reserve a name, so the freed one may be gone."""
+    db = FakeDB([
+        [make_supplier(is_active=False)],
+        [{"id": uuid4()}],  # another active supplier already holds the name
+    ])
+
+    with pytest.raises(AppError) as error:
+        update_supplier_status(
+            make_user(),
+            db,
+            uuid4(),
+            True,
+        )
+
+    assert error.value.status_code == 400
+    assert "name" in error.value.detail.lower()
+    assert db.commits == 0
+
+
+def test_the_reactivation_guard_excludes_the_supplier_itself():
+    supplier_id = uuid4()
+    db = FakeDB([
+        [make_supplier(is_active=False)],
+        [],
+        [],
+        [make_supplier(is_active=True)],
+    ])
+
+    update_supplier_status(make_user(), db, supplier_id, True)
+
+    guard = str(db.statements[1])
+
+    assert "is_active IS true" in guard
+    assert "id !=" in guard
