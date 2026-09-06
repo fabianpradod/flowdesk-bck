@@ -156,7 +156,12 @@ def import_products(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role("manager")),
 ):
-    return inventory_service.import_products_from_file(file.filename or "", file.file.read(), current_user, db)
+    return inventory_service.import_products_from_file(
+        file.filename or "",
+        inventory_service.read_import_upload(file),
+        current_user,
+        db,
+    )
 
 
 @router.get("/movements", response_model=list[InventoryMovementResponse], summary="Listar movimientos", 

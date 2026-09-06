@@ -79,12 +79,46 @@ def _validate_csv_injection(value: str, row: int, column: str, errors: list[dict
                 "message": "Potential CSV injection detected"
             })
 
+IMPORT_READ_CHUNK = 64 * 1024
+
+
 def _validate_import_size(raw_rows: list[dict]):
     if len(raw_rows) > MAX_IMPORT_ROWS:
         raise ProductImportError(
             "Import exceeds maximum allowed rows",
             "import_too_large",
             []
+        )
+
+
+def read_import_upload(file: UploadFile) -> bytes:
+    """Read an upload in chunks, refusing it as soon as it passes the limit.
+
+    The route used to call file.file.read(), which buffers the whole upload
+    before anything checks its size, so the documented 5MB cap protected
+    nothing. Stopping at the first chunk that crosses the limit means an
+    oversized file is never held in memory in full.
+    """
+    chunks = []
+    total = 0
+    while chunk := file.file.read(IMPORT_READ_CHUNK):
+        total += len(chunk)
+        if total > MAX_IMPORT_FILE_SIZE:
+            raise ProductImportError(
+                f"Import file exceeds the {MAX_IMPORT_FILE_SIZE} byte limit",
+                "file_too_large",
+                [],
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _validate_import_file_size(content: bytes) -> None:
+    if len(content) > MAX_IMPORT_FILE_SIZE:
+        raise ProductImportError(
+            f"Import file exceeds the {MAX_IMPORT_FILE_SIZE} byte limit",
+            "file_too_large",
+            [],
         )
 
 def list_suppliers(
@@ -623,6 +657,8 @@ def import_products_from_file(filename: str, content: bytes, current_user: User,
 def parse_product_import_file(filename: str, content: bytes) -> list[dict]:
     if not content:
         raise ProductImportError("Import file is empty", "empty_file", [])
+
+    _validate_import_file_size(content)
 
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if extension == "csv":

@@ -171,3 +171,82 @@ def test_a_file_with_an_overflowing_price_fails_validation_cleanly():
         parse_product_import_file("productos.csv", csv)
 
     assert error.value.errors[0]["code"] == "decimal_too_large"
+
+
+# ─── upload size limit ────────────────────────────────────────────────────────
+
+from app.core.config import MAX_IMPORT_FILE_SIZE
+from app.services.inventory import IMPORT_READ_CHUNK, read_import_upload
+
+
+class CountingUpload:
+    """Serves a payload in chunks and records how much was actually read."""
+
+    def __init__(self, payload: bytes):
+        self._stream = io.BytesIO(payload)
+        self.bytes_read = 0
+        self.file = self
+
+    def read(self, size=-1):
+        chunk = self._stream.read(size)
+        self.bytes_read += len(chunk)
+        return chunk
+
+
+def test_an_upload_within_the_limit_is_read_whole():
+    payload = b"x" * (IMPORT_READ_CHUNK * 2)
+    upload = CountingUpload(payload)
+
+    assert read_import_upload(upload) == payload
+
+
+def test_an_oversized_upload_is_refused():
+    upload = CountingUpload(b"x" * (MAX_IMPORT_FILE_SIZE + 1))
+
+    with pytest.raises(ProductImportError) as error:
+        read_import_upload(upload)
+
+    assert error.value.status_code == 400
+    assert error.value.code == "file_too_large"
+
+
+def test_an_oversized_upload_is_not_buffered_in_full():
+    """The point of the change: it stops reading instead of loading everything."""
+    oversized = MAX_IMPORT_FILE_SIZE * 4
+    upload = CountingUpload(b"x" * oversized)
+
+    with pytest.raises(ProductImportError):
+        read_import_upload(upload)
+
+    assert upload.bytes_read <= MAX_IMPORT_FILE_SIZE + IMPORT_READ_CHUNK
+    assert upload.bytes_read < oversized
+
+
+def test_a_payload_at_the_exact_limit_is_accepted():
+    payload = b"x" * MAX_IMPORT_FILE_SIZE
+    upload = CountingUpload(payload)
+
+    assert len(read_import_upload(upload)) == MAX_IMPORT_FILE_SIZE
+
+
+def test_the_limit_also_holds_when_the_service_is_called_directly():
+    oversized = b"x" * (MAX_IMPORT_FILE_SIZE + 1)
+
+    with pytest.raises(ProductImportError) as error:
+        parse_product_import_file("productos.csv", oversized)
+
+    assert error.value.code == "file_too_large"
+
+
+def test_the_endpoint_refuses_an_oversized_file():
+    token = login_admin()
+    file = io.BytesIO(b"x" * (MAX_IMPORT_FILE_SIZE + 1))
+
+    response = client.post(
+        "/api/v1/inventory/products/import",
+        headers = {"Authorization": f"Bearer {token}"},
+        files = {"file": ("productos.csv", file, "text/csv")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "file_too_large"
