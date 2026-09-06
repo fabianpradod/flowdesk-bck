@@ -22,6 +22,7 @@ app = FastAPI(
         - Usuarios
         - Empresas
         - Inventario
+        - Tareas
         - Tenants
 
     Cada empresa utiliza un esquema independiente.""",
