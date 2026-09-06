@@ -359,3 +359,37 @@ def test_no_security_scheme_is_attached_to_the_public_auth_routes():
         assert "security" not in schema["paths"][path]["post"], path
 
     assert "security" in schema["paths"]["/api/v1/auth/register"]["post"]
+
+
+# ─── analytics aggregate the whole tenant, so they start at manager ───────────
+
+ANALYTICS = (
+    "/api/v1/inventory/analytics/monthly",
+    "/api/v1/inventory/analytics/trend",
+    "/api/v1/inventory/analytics/products",
+    "/api/v1/inventory/metrics",
+    "/api/v1/inventory/history",
+)
+
+
+@pytest.mark.parametrize("path", ANALYTICS)
+def test_analytics_are_refused_for_an_employee(path):
+    """These had no role guard at all: any authenticated user could read them."""
+    response = client_as("employee", inventory_router).get(path)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("path", ANALYTICS)
+@pytest.mark.parametrize("role", ["manager", "admin", "superadmin"])
+def test_analytics_are_allowed_from_manager_up(path, role):
+    response = client_as(role, inventory_router).get(path)
+
+    assert not forbidden(response)
+
+
+def test_every_analytics_route_carries_a_security_scheme():
+    schema = build_app(inventory_router).openapi()
+
+    for path in ANALYTICS:
+        assert "security" in schema["paths"][path]["get"], path

@@ -4,7 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 from uuid import UUID
-from app.api.dependencies.auth import get_current_user, get_db, require_role
+from app.api.dependencies.auth import get_db, require_role
 from app.models.users import User
 from app.schemas.inventory import (
     AnalyticsPeriod,
@@ -197,7 +197,7 @@ def alerts(
 
 @router.get("/analytics/monthly", response_model=InventoryMonthlyAnalyticsResponse, summary="Análisis mensual", 
             description =
-                "Retorna comparativa mensual de movimientos de inventario contra el período anterior."
+                "Retorna comparativa mensual de movimientos de inventario contra el período anterior. Requiere rol manager o superior."
 )
 def monthly_analytics(
     period: AnalyticsPeriod = Query(default="6m"),
@@ -205,7 +205,7 @@ def monthly_analytics(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return inventory_service.get_monthly_behavior(
         current_user,
@@ -219,7 +219,7 @@ def monthly_analytics(
 
 @router.get("/analytics/trend", response_model=InventoryTrendAnalyticsResponse, summary="Tendencia de inventario", 
             description =
-                "Retorna la tendencia de movimientos de inventario agrupada por día, semana o mes."
+                "Retorna la tendencia de movimientos de inventario agrupada por día, semana o mes. Requiere rol manager o superior."
 )
 def inventory_trend(
     period: AnalyticsPeriod = Query(default="30d"),
@@ -228,7 +228,7 @@ def inventory_trend(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return inventory_service.get_inventory_trend(
         current_user,
@@ -243,7 +243,7 @@ def inventory_trend(
 
 @router.get("/analytics/products", response_model = ProductAnalyticsResponse, summary = "Análisis por producto", 
             description =
-                "Retorna métricas por producto. Ordenable por entradas, salidas o stock. Límite configurable entre 1 y 50 productos."
+                "Retorna métricas por producto. Ordenable por entradas, salidas o stock. Límite configurable entre 1 y 50 productos. Requiere rol manager o superior."
 )
 def product_analytics(
     period: AnalyticsPeriod = Query(default="30d"),
@@ -252,7 +252,7 @@ def product_analytics(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return inventory_service.get_product_analytics(
         current_user,
@@ -264,14 +264,17 @@ def product_analytics(
         end_date=end_date,
     )
 
-@router.get("/metrics", response_model=InventoryMetricsResponse)
+@router.get("/metrics", response_model=InventoryMetricsResponse, summary="Métricas de inventario",
+            description =
+                "Retorna entradas, salidas y conteos de stock bajo del período. Requiere rol manager o superior."
+)
 def inventory_metrics(
     period: AnalyticsPeriod = Query(default="30d"),
     product_id: UUID | None = Query(default=None),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return inventory_service.get_inventory_metrics(
         current_user,
@@ -282,13 +285,16 @@ def inventory_metrics(
         end_date=end_date,
     )
 
-@router.get("/history", response_model=list[InventoryHistoryRow])
+@router.get("/history", response_model=list[InventoryHistoryRow], summary="Historial de inventario",
+            description =
+                "Retorna el historial de movimientos con datos del producto. Requiere rol manager o superior."
+)
 def inventory_history(
     limit: int = Query(default=20, ge=1, le=100),
     product_id: UUID | None = Query(default=None),
     movement_type: MovementType | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return inventory_service.list_inventory_history(
         current_user,
