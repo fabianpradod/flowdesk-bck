@@ -154,18 +154,18 @@ def test_clean_text_helpers():
 
 def test_parse_decimal_empty_defaults_to_zero():
     errors = []
-    assert inventory._parse_nonnegative_decimal("", "precio_venta", 2, errors) == Decimal("0")
+    assert inventory._parse_nonnegative_decimal("", "precio_venta", 2, errors, inventory.MAX_MONEY) == Decimal("0")
     assert errors == []
 
 def test_parse_decimal_invalid_records_error():
     errors = []
-    result = inventory._parse_nonnegative_decimal("abc", "precio_venta", 2, errors)
+    result = inventory._parse_nonnegative_decimal("abc", "precio_venta", 2, errors, inventory.MAX_MONEY)
     assert result == Decimal("0")
     assert errors[0]["code"] == "invalid_decimal"
 
 def test_parse_decimal_negative_records_error():
     errors = []
-    result = inventory._parse_nonnegative_decimal("-5", "precio_venta", 2, errors)
+    result = inventory._parse_nonnegative_decimal("-5", "precio_venta", 2, errors, inventory.MAX_MONEY)
     assert result == Decimal("0")
     assert errors[0]["code"] == "negative_decimal"
 

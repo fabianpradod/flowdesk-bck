@@ -2513,6 +2513,7 @@ def test_parse_nonnegative_decimal_valid():
         "precio",
         2,
         errors,
+        inventory_service.MAX_MONEY,
     )
 
     assert result == Decimal("12.50")
@@ -2526,6 +2527,7 @@ def test_parse_nonnegative_decimal_empty():
         "precio",
         2,
         errors,
+        inventory_service.MAX_MONEY,
     )
 
     assert result == Decimal("0")
@@ -2538,6 +2540,7 @@ def test_parse_nonnegative_decimal_invalid():
         "precio",
         2,
         errors,
+        inventory_service.MAX_MONEY,
     )
 
     assert result == Decimal("0")
@@ -2551,6 +2554,7 @@ def test_parse_nonnegative_decimal_negative():
         "precio",
         2,
         errors,
+        inventory_service.MAX_MONEY,
     )
 
     assert result == Decimal("0")

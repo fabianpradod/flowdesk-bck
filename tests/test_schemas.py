@@ -155,3 +155,64 @@ def test_blank_movement_reason_becomes_null():
     )
 
     assert data.motivo is None
+
+# ─── numeric bounds mirror the Numeric(precision, scale) columns ──────────────
+
+def test_product_price_beyond_its_column_is_rejected():
+    with pytest.raises(ValidationError):
+        ProductCreate(
+            sku = "SKU-1",
+            nombre = "Producto",
+            precio_venta = "100000000.00",
+        )
+
+def test_product_price_at_the_column_maximum_is_accepted():
+    data = ProductCreate(
+        sku = "SKU-1",
+        nombre = "Producto",
+        precio_venta = "99999999.99",
+    )
+
+    assert str(data.precio_venta) == "99999999.99"
+
+def test_exponent_notation_can_no_longer_overflow_the_column():
+    with pytest.raises(ValidationError):
+        ProductCreate(
+            sku = "SKU-1",
+            nombre = "Producto",
+            precio_venta = "1E999",
+        )
+
+def test_product_minimum_stock_beyond_its_column_is_rejected():
+    with pytest.raises(ValidationError):
+        ProductCreate(
+            sku = "SKU-1",
+            nombre = "Producto",
+            stock_minimo = "10000000000.00",
+        )
+
+def test_movement_quantity_beyond_its_column_is_rejected():
+    with pytest.raises(ValidationError):
+        InventoryMovementCreate(
+            producto_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            tipo_movimiento = "entrada_manual",
+            cantidad = "10000000000.00",
+        )
+
+def test_movement_quantity_at_the_column_maximum_is_accepted():
+    data = InventoryMovementCreate(
+        producto_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+        tipo_movimiento = "entrada_manual",
+        cantidad = "9999999999.99",
+    )
+
+    assert str(data.cantidad) == "9999999999.99"
+
+def test_non_finite_quantities_are_rejected():
+    for value in ("NaN", "Infinity"):
+        with pytest.raises(ValidationError):
+            InventoryMovementCreate(
+                producto_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                tipo_movimiento = "entrada_manual",
+                cantidad = value,
+            )

@@ -62,6 +62,7 @@ class SupplierProductCreate(StrippedModel):
     producto_id: UUID
     precio_cotizacion: Decimal = Field(
         ge=0,
+        max_digits=10,
         decimal_places=2,
     )
     descripcion: str | None = Field(
@@ -73,6 +74,7 @@ class SupplierProductUpdate(StrippedModel):
     precio_cotizacion: Decimal | None = Field(
         default=None,
         ge=0,
+        max_digits=10,
         decimal_places=2,
     )
     descripcion: str | None = Field(
@@ -104,8 +106,8 @@ class ProductCreate(StrippedModel):
     sku: str = Field(min_length=1, max_length=50)
     nombre: str = Field(min_length=1, max_length=100)
     descripcion: str | None = None
-    precio_venta: Decimal = Field(default=Decimal("0"), ge=0, decimal_places=2)
-    stock_minimo: Decimal = Field(default=Decimal("0"), ge=0, decimal_places=2)
+    precio_venta: Decimal = Field(default=Decimal("0"), ge=0, max_digits=10, decimal_places=2)
+    stock_minimo: Decimal = Field(default=Decimal("0"), ge=0, max_digits=12, decimal_places=2)
     unidad_medida: str = Field(default="unidad", min_length=1, max_length=20)
     proveedor_id: UUID | None = None
 
@@ -134,7 +136,7 @@ class ProductStatusUpdate(BaseModel):
 class InventoryMovementCreate(StrippedModel):
     producto_id: UUID
     tipo_movimiento: MovementType
-    cantidad: Decimal = Field(gt=0, decimal_places=2)
+    cantidad: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     motivo: str | None = Field(default=None, max_length=200)
     referencia_tipo: str | None = Field(default=None, max_length=30)
     referencia_id: UUID | None = None

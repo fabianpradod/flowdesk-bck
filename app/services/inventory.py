@@ -65,6 +65,10 @@ PERIOD_DAYS = {
 
 MAX_IMPORT_ROWS = 5000
 
+# Upper bounds of the Numeric(precision, scale) columns these values land in.
+MAX_MONEY = Decimal("99999999.99")       # Numeric(10, 2)
+MAX_QUANTITY = Decimal("9999999999.99")  # Numeric(12, 2)
+
 def _validate_csv_injection(value: str, row: int, column: str, errors: list[dict]):
     if isinstance(value, str):
         if value.startswith(("=", "+", "-", "@")):
@@ -773,8 +777,8 @@ def _normalize_product_import_rows(raw_rows: list[dict]) -> list[dict]:
             "sku": sku,
             "nombre": nombre,
             "descripcion": _clean_optional_text(row.get("descripcion")),
-            "precio_venta": _parse_nonnegative_decimal(row.get("precio_venta"), "precio_venta", index, errors),
-            "stock_minimo": _parse_nonnegative_decimal(row.get("stock_minimo"), "stock_minimo", index, errors),
+            "precio_venta": _parse_nonnegative_decimal(row.get("precio_venta"), "precio_venta", index, errors, MAX_MONEY),
+            "stock_minimo": _parse_nonnegative_decimal(row.get("stock_minimo"), "stock_minimo", index, errors, MAX_QUANTITY),
             "unidad_medida": _clean_text(row.get("unidad_medida")) or "unidad",
             "proveedor_id": _parse_optional_uuid(row.get("proveedor_id"), "proveedor_id", index, errors),
         }
@@ -802,7 +806,7 @@ def _clean_optional_text(value) -> str | None:
     return cleaned or None
 
 
-def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict]) -> Decimal:
+def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict], max_value: Decimal) -> Decimal:
     cleaned = _clean_text(value)
     if not cleaned:
         return Decimal("0")
@@ -811,8 +815,18 @@ def _parse_nonnegative_decimal(value, column: str, row: int, errors: list[dict])
     except (InvalidOperation, ValueError):
         errors.append({"row": row, "column": column, "code": "invalid_decimal", "message": "Value must be numeric"})
         return Decimal("0")
+    # NaN and Infinity parse fine but raise InvalidOperation on comparison.
+    if not parsed.is_finite():
+        errors.append({"row": row, "column": column, "code": "invalid_decimal", "message": "Value must be a finite number"})
+        return Decimal("0")
     if parsed < Decimal("0"):
         errors.append({"row": row, "column": column, "code": "negative_decimal", "message": "Value must be non-negative"})
+        return Decimal("0")
+    if parsed > max_value:
+        errors.append({"row": row, "column": column, "code": "decimal_too_large", "message": f"Value must not exceed {max_value}"})
+        return Decimal("0")
+    if -parsed.as_tuple().exponent > 2:
+        errors.append({"row": row, "column": column, "code": "too_many_decimals", "message": "Value must have at most 2 decimal places"})
         return Decimal("0")
     return parsed
 
