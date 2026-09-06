@@ -310,7 +310,7 @@ def list_supplier_products(
     search: str | None = Query(default=None),
     active_only: bool = Query(default=True),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_supplier_products(
         current_user,

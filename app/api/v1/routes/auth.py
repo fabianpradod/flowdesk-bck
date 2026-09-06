@@ -78,7 +78,7 @@ def set_password(data: PasswordSet, db: Session = Depends(get_db)):
     },
     status_code = 201,
 )
-def create_employee(data: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin", "superadmin"))):
+def create_employee(data: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
     """Crea un nuevo empleado en la empresa del admin autenticado y envía una invitación por correo."""
     return auth_service.create_employee(data, current_user, db)
 
