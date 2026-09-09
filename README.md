@@ -56,6 +56,34 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 
 No suba `.env` al repositorio. `.env.example` solo contiene valores de ejemplo.
 
+## HTTPS en producción
+
+Todo el endurecimiento de transporte está apagado por defecto, para que el
+desarrollo local y las pruebas sigan funcionando sobre HTTP plano. Se enciende
+por variables de entorno.
+
+| Variable | Efecto |
+|---|---|
+| `FORCE_HTTPS` | Redirige HTTP a HTTPS y envía `Strict-Transport-Security` |
+| `ALLOWED_HOSTS` | Lista separada por comas de hosts aceptados. Vacío desactiva la validación |
+| `HSTS_MAX_AGE` | Duración de HSTS en segundos. Por defecto 63072000, dos años |
+
+Las cabeceras `X-Content-Type-Options`, `X-Frame-Options` y `Referrer-Policy`
+se envían siempre, con o sin TLS.
+
+Dos detalles que importan al desplegar:
+
+- **HSTS solo sale con `FORCE_HTTPS` encendido.** Enviarlo mientras el sitio
+  todavía responde por HTTP deja al navegador negándose a abrir el host por
+  `http://`, y eso no se revierte desde el servidor.
+- **Detrás de un proxy que termina TLS, uvicorn necesita `--proxy-headers`.**
+  Sin eso ve HTTP plano, no reconoce `X-Forwarded-Proto` y la redirección entra
+  en bucle. El `CMD` del Dockerfile ya lo pasa, junto con
+  `--forwarded-allow-ips`.
+
+Activar `ALLOWED_HOSTS` antes de exponer el servicio: sin lista, el host del
+request no se valida.
+
 ## Matriz de permisos
 
 Cuatro roles, jerárquicos: `employee` < `manager` < `admin` < `superadmin`.
@@ -111,6 +139,41 @@ Dos reglas del dependency que conviene tener presentes:
 Las restricciones por empresa son independientes del rol: `get_user_schema_name`
 resuelve el esquema desde `current_user.company`, así que ningún endpoint de
 inventario o comercial puede leer datos de otro tenant, sea cual sea su rol.
+
+## Desactivación de clientes y proveedores
+
+Clientes y proveedores no se borran: se desactivan. El registro conserva su
+historial y deja de aparecer en los listados por defecto.
+
+| Operación | Cliente | Proveedor |
+|---|---|---|
+| Desactivar | `PATCH /commercial/clients/{id}/status` con `is_active=false` | `PATCH /inventory/suppliers/{id}/status` |
+| Eliminar (soft delete) | `DELETE /commercial/clients/{id}` | `DELETE /inventory/suppliers/{id}` |
+| Listar por estado | `GET /commercial/clients?is_active=` | `GET /inventory/suppliers?is_active=` |
+
+Ambos exigen rol admin, y ambos responden 400 si el registro ya está en el
+estado solicitado.
+
+**Qué bloquea la desactivación.** Solo las relaciones en curso, nunca el
+historial:
+
+- Un proveedor no se desactiva mientras tenga productos activos asociados.
+- Un cliente no se desactiva mientras tenga ventas en estado `borrador`. Las
+  ventas `completada` y `cancelada` no lo impiden — conservarlas es justamente
+  el motivo del soft delete.
+
+**Nombres y correos.** Solo los registros activos reservan su nombre y su
+correo, en clientes y en proveedores por igual. Desactivar libera ambos, de modo
+que el nombre puede reutilizarse. Como contrapartida, reactivar falla con 400 si
+alguien tomó ese nombre mientras tanto; hay que renombrar antes de reactivar.
+
+Los índices únicos de `cliente` son parciales sobre `is_active`, así que la
+regla se sostiene también a nivel de base y no solo en el service.
+
+**Filtro de estado.** `?is_active=true` y `?is_active=false` filtran por estado
+exacto; omitirlo muestra solo los activos. En clientes se conserva `active_only`
+como alias histórico y está marcado como deprecado: `active_only=false` equivale
+a no filtrar.
 
 ## Contrato consumido por frontend
 

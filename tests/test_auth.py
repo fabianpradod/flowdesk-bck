@@ -140,8 +140,8 @@ def test_forgot_password_rate_limit():
 
     assert response.status_code==429
 
-def test_register_duplicate_email():
-    response = client.post(
+def test_register_duplicate_email(superadmin_client):
+    response = superadmin_client.post(
         "/api/v1/auth/register",
         json = {
             "name": "Empresa Test",
@@ -152,8 +152,8 @@ def test_register_duplicate_email():
 
     assert response.status_code == 400
 
-def test_register_duplicate_username():
-    response = client.post(
+def test_register_duplicate_username(superadmin_client):
+    response = superadmin_client.post(
         "/api/v1/auth/register",
         json = {
             "name": "Empresa Test",
@@ -231,8 +231,8 @@ def test_forgot_password_invalid_email():
 
     assert response.status_code == 422
 
-def test_register_invalid_payload():
-    response = client.post(
+def test_register_invalid_payload(superadmin_client):
+    response = superadmin_client.post(
         "/api/v1/auth/register",
         json = {}
     )

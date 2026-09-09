@@ -16,12 +16,14 @@ def list_clients(
     db: Session,
     *,
     search: str | None = None,
-    active_only: bool = True,
+    is_active: bool | None = True,
 ) -> list[dict]:
+    """List clients, filtered by state. None returns both active and inactive,
+    the same tri-state contract list_suppliers already exposes."""
     clients = _clients_table(current_user)
     query = select(clients).order_by(clients.c.nombre.asc())
-    if active_only:
-        query = query.where(clients.c.is_active.is_(True))
+    if is_active is not None:
+        query = query.where(clients.c.is_active.is_(is_active))
     if search:
         term = f"%{search.strip().lower()}%"
         query = query.where(
@@ -149,6 +151,18 @@ def update_client_status(client_id: UUID, is_active: bool, current_user, db: Ses
             message="Client already has this status",
         )
 
+    if is_active:
+        # The name and email freed on deactivation may have been taken since.
+        _ensure_identity_available(
+            db,
+            clients,
+            nombre=current["nombre"],
+            correo=current["correo"],
+            exclude_client_id=client_id,
+        )
+    else:
+        _assert_client_has_no_pending_sales(db, current_user, client_id)
+
     try:
         result = db.execute(
             update(clients)
@@ -182,6 +196,7 @@ def update_client_status(client_id: UUID, is_active: bool, current_user, db: Ses
 def delete_client(client_id: UUID, current_user, db: Session) -> None:
     clients = _clients_table(current_user)
     _ensure_client_exists(db, clients, client_id)
+    _assert_client_has_no_pending_sales(db, current_user, client_id)
     try:
         db.execute(
             update(clients)
@@ -385,6 +400,28 @@ def list_client_purchases(
     return [get_sale(sale_id, current_user, db, client_name=client["nombre"]) for sale_id in sale_ids]
 
 
+PENDING_SALE_STATES = ("borrador",)
+
+
+def _assert_client_has_no_pending_sales(db: Session, current_user, client_id: UUID) -> None:
+    """Refuse deactivation while the client still has sales in flight.
+
+    Completed and cancelled sales are history and must survive deactivation —
+    that is the whole point of the soft delete. Only a sale still being built
+    blocks it, because deactivating underneath one would strand it against an
+    inactive client.
+    """
+    sales = _tenant_tables(current_user)["venta"]
+    pending = db.execute(
+        select(sales.c.id).where(
+            sales.c.cliente_id == client_id,
+            sales.c.estado.in_(PENDING_SALE_STATES),
+        )
+    ).first()
+    if pending:
+        raise AppError(status_code=400, message="Client still has pending sales")
+
+
 def _clients_table(current_user):
     schema_name = get_user_schema_name(current_user)
     return get_tenant_tables(schema_name)["cliente"]
@@ -423,7 +460,13 @@ def _ensure_identity_available(
         comparisons.append(func.lower(clients.c.correo) == correo.casefold())
     if not comparisons:
         return
-    query = select(clients.c.id, clients.c.nombre, clients.c.correo).where(or_(*comparisons))
+    # Only active clients reserve a name or an email, matching the partial
+    # unique indexes on the table and the way suppliers already behave.
+    query = (
+        select(clients.c.id, clients.c.nombre, clients.c.correo)
+        .where(or_(*comparisons))
+        .where(clients.c.is_active.is_(True))
+    )
     if exclude_client_id is not None:
         query = query.where(clients.c.id != exclude_client_id)
     existing = db.execute(query).mappings().first()

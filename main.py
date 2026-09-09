@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import FRONTEND_URL
+from app.core.https import configure_transport_security
 from app.db.init_db import init_db
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
@@ -35,6 +36,10 @@ app = FastAPI(
 )
 
 init_db()
+
+# ─── transport security ───────────────────────────────────────────
+# No-op unless FORCE_HTTPS / ALLOWED_HOSTS are set, so local dev is unaffected.
+configure_transport_security(app)
 
 # ─── CORS ─────────────────────────────────────────────────────────
 _cors_origins = ["http://localhost:5173", "http://localhost:3000"]

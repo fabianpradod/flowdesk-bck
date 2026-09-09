@@ -4,8 +4,8 @@ from main import app
 
 client = TestClient(app)
 
-def test_complete_auth_flow():
-    company_response = client.post(
+def test_complete_auth_flow(superadmin_client):
+    company_response = superadmin_client.post(
         "/api/v1/auth/register",
         json = {
             "name": "QA Company",
