@@ -23,12 +23,18 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
     responses = {
         201: {"description": "Empresa creada"},
         400: {"description": "Email o username ya registrado"},
+        401: {"description": "No autenticado"},
+        403: {"description": "Sin permisos"},
         500: {"description": "Error interno"},
     },
     status_code = 201,
 )
-def create_company(data: CompanyCreate, db: Session = Depends(get_db)):
-    """Crea una nueva empresa junto con su usuario administrador y su esquema de base de datos. Solo accesible para superadmin."""
+def create_company(
+    data: CompanyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("superadmin", strict=True)),
+):
+    """Crea una nueva empresa junto con su usuario administrador y su esquema de base de datos. Solo accesible para superadmin: un admin no pasa."""
     return auth_service.register_company(data, db)
 
 
@@ -78,7 +84,7 @@ def set_password(data: PasswordSet, db: Session = Depends(get_db)):
     },
     status_code = 201,
 )
-def create_employee(data: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin", "superadmin"))):
+def create_employee(data: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
     """Crea un nuevo empleado en la empresa del admin autenticado y envía una invitación por correo."""
     return auth_service.create_employee(data, current_user, db)
 

@@ -4,7 +4,7 @@ import app.services.commercial as commercial_service
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.dependencies.auth import get_current_user, get_db, require_role
+from app.api.dependencies.auth import get_db, require_role
 from app.models.users import User
 from app.schemas.commercial import (
     ClientCreate,
@@ -21,16 +21,35 @@ router = APIRouter(prefix="/api/v1/commercial", tags=["commercial"])
 @router.get("/clients", response_model=list[ClientResponse], summary="Listar clientes")
 def clients(
     search: str | None = Query(default=None),
-    active_only: bool = Query(default=True),
+    is_active: bool | None = Query(
+        default=None,
+        description="Filtra por estado. Omitirlo conserva el comportamiento histórico de active_only.",
+    ),
+    active_only: bool = Query(
+        default=True,
+        deprecated=True,
+        description="Alias histórico. Usar ?is_active= en su lugar; active_only=false equivale a no filtrar.",
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
-    """Retorna los clientes del esquema de la empresa autenticada. Permite buscar por nombre, correo o teléfono."""
+    """Retorna los clientes del esquema de la empresa autenticada. Permite buscar por nombre, correo o teléfono.
+
+    Filtrable por estado con ?is_active=, igual que proveedores. Sin ese parámetro
+    se aplica active_only, que por defecto muestra solo los activos.
+    """
+    if is_active is None and not active_only:
+        state = None
+    elif is_active is None:
+        state = True
+    else:
+        state = is_active
+
     return commercial_service.list_clients(
         current_user,
         db,
         search=search,
-        active_only=active_only,
+        is_active=state,
     )
 
 
@@ -38,7 +57,7 @@ def clients(
 def client_detail(
     client_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role()),
 ):
     """Retorna un cliente por id dentro del esquema de la empresa autenticada."""
     return commercial_service.get_client(client_id, current_user, db)
@@ -70,9 +89,9 @@ def update_client_status(
     client_id: UUID,
     data: ClientStatusUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("admin")),
 ):
-    """Activa o desactiva un cliente sin eliminar su registro. Requiere rol manager o superior."""
+    """Activa o desactiva un cliente sin eliminar su registro. Requiere rol admin o superior."""
     return commercial_service.update_client_status(client_id, data.is_active, current_user, db)
 
 
@@ -80,9 +99,9 @@ def update_client_status(
 def delete_client(
     client_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("admin")),
 ):
-    """Desactiva un cliente del esquema de la empresa autenticada. Requiere rol manager o superior."""
+    """Desactiva un cliente del esquema de la empresa autenticada. Requiere rol admin o superior."""
     commercial_service.delete_client(client_id, current_user, db)
 
 
@@ -90,9 +109,9 @@ def delete_client(
 def create_sale(
     data: SaleCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role()),
+    current_user: User = Depends(require_role("manager")),
 ):
-    """Registra una venta para un cliente activo o, sin cliente_id, para consumidor final."""
+    """Registra una venta para un cliente activo o, sin cliente_id, para consumidor final. Descuenta stock, así que requiere rol manager o superior."""
     return commercial_service.create_sale(data, current_user, db)
 
 
