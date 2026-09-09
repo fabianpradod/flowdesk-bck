@@ -393,3 +393,40 @@ def test_every_analytics_route_carries_a_security_scheme():
 
     for path in ANALYTICS:
         assert "security" in schema["paths"][path]["get"], path
+
+
+# ─── the client list filter now matches the supplier one ──────────────────────
+
+def client_list(**params):
+    return client_as("manager").get("/api/v1/commercial/clients", params=params)
+
+
+def test_the_default_still_lists_only_active_clients():
+    assert client_list().status_code == 200
+
+
+def test_is_active_is_accepted_like_it_is_on_suppliers():
+    assert client_list(is_active="false").status_code == 200
+    assert client_list(is_active="true").status_code == 200
+
+
+def test_the_deprecated_alias_keeps_working():
+    assert client_list(active_only="false").status_code == 200
+
+
+def test_both_client_and_supplier_lists_expose_is_active():
+    schema = build_app(commercial_router, inventory_router).openapi()
+
+    def params(path):
+        return {p["name"] for p in schema["paths"][path]["get"]["parameters"]}
+
+    assert "is_active" in params("/api/v1/commercial/clients")
+    assert "is_active" in params("/api/v1/inventory/suppliers")
+
+
+def test_the_alias_is_marked_deprecated_in_the_schema():
+    schema = build_app(commercial_router).openapi()
+    parameters = schema["paths"]["/api/v1/commercial/clients"]["get"]["parameters"]
+    alias = next(p for p in parameters if p["name"] == "active_only")
+
+    assert alias["deprecated"] is True

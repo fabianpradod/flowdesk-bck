@@ -200,7 +200,11 @@ def update_supplier_status(current_user: User, db: Session, supplier_id, is_acti
     if supplier["is_active"] == is_active:
         raise AppError(status_code=400, message="Supplier already has this status")
 
-    if not is_active:
+    if is_active:
+        # Only active suppliers reserve a name, so the one freed on deactivation
+        # may have been taken since.
+        _assert_supplier_name_available(db, suppliers, supplier["nombre"], exclude_id=supplier_id)
+    else:
         _assert_supplier_has_no_active_products(db, tables["producto"], supplier_id)
 
     _set_supplier_active(db, suppliers, supplier_id, is_active)

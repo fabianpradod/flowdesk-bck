@@ -140,6 +140,41 @@ Las restricciones por empresa son independientes del rol: `get_user_schema_name`
 resuelve el esquema desde `current_user.company`, así que ningún endpoint de
 inventario o comercial puede leer datos de otro tenant, sea cual sea su rol.
 
+## Desactivación de clientes y proveedores
+
+Clientes y proveedores no se borran: se desactivan. El registro conserva su
+historial y deja de aparecer en los listados por defecto.
+
+| Operación | Cliente | Proveedor |
+|---|---|---|
+| Desactivar | `PATCH /commercial/clients/{id}/status` con `is_active=false` | `PATCH /inventory/suppliers/{id}/status` |
+| Eliminar (soft delete) | `DELETE /commercial/clients/{id}` | `DELETE /inventory/suppliers/{id}` |
+| Listar por estado | `GET /commercial/clients?is_active=` | `GET /inventory/suppliers?is_active=` |
+
+Ambos exigen rol admin, y ambos responden 400 si el registro ya está en el
+estado solicitado.
+
+**Qué bloquea la desactivación.** Solo las relaciones en curso, nunca el
+historial:
+
+- Un proveedor no se desactiva mientras tenga productos activos asociados.
+- Un cliente no se desactiva mientras tenga ventas en estado `borrador`. Las
+  ventas `completada` y `cancelada` no lo impiden — conservarlas es justamente
+  el motivo del soft delete.
+
+**Nombres y correos.** Solo los registros activos reservan su nombre y su
+correo, en clientes y en proveedores por igual. Desactivar libera ambos, de modo
+que el nombre puede reutilizarse. Como contrapartida, reactivar falla con 400 si
+alguien tomó ese nombre mientras tanto; hay que renombrar antes de reactivar.
+
+Los índices únicos de `cliente` son parciales sobre `is_active`, así que la
+regla se sostiene también a nivel de base y no solo en el service.
+
+**Filtro de estado.** `?is_active=true` y `?is_active=false` filtran por estado
+exacto; omitirlo muestra solo los activos. En clientes se conserva `active_only`
+como alias histórico y está marcado como deprecado: `active_only=false` equivale
+a no filtrar.
+
 ## Contrato consumido por frontend
 
 La especificación completa está en `/docs`. Estos son los grupos principales:
