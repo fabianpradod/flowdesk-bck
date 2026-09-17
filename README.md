@@ -219,6 +219,37 @@ restringen al usuario y al esquema tenant autenticados.
 
 | Método | Path | Descripción |
 |---|---|---|
+
+Todos los endpoints de reportes requieren rol admin o superior.
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/history` | Historial de reportes generados. `?limit=` entre 1 y 100 (default 20) |
+| GET | `/inventario` | Stock actual. Filtros `?product_id=`, `?is_active=`, `?only_low_stock=` |
+| GET | `/movimientos` | Movimientos del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?product_id=`, `?movement_type=` |
+| GET | `/alertas` | Alertas del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?open_only=` |
+
+Los tres reportes aceptan `?format=csv` (default) o `?format=pdf` y responden con el
+archivo como descarga (`Content-Disposition: attachment`), no con JSON.
+
+`period` acepta `7d`, `30d` (default), `90d`, `6m`, `12m`, `ytd` o `custom`; con `custom` hay
+que enviar `start_date` y `end_date`, de lo contrario la API responde 400.
+
+Cada generación queda registrada en la tabla `reporte` del esquema de la empresa y se
+consulta con `GET /history`. El archivo no se almacena en el servidor — se transmite
+directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
+
+El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
+empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
+
+### Tareas
+
+Los estados válidos son `pendiente`, `en_progreso`, `completada` y `cancelada`;
+las prioridades son `baja`, `media`, `alta` y `urgente`. Todas las consultas se
+restringen al usuario y al esquema tenant autenticados.
+
+| Método | Path | Descripción |
+|---|---|---|
 | GET | `/api/v1/tasks` | Lista y filtra por `estado`, `prioridad` o `search` |
 | POST | `/api/v1/tasks` | Crea una tarea pendiente |
 | GET | `/api/v1/tasks/{task_id}` | Obtiene una tarea propia |
@@ -234,3 +265,41 @@ pytest -q
 
 Las pruebas no requieren un PostgreSQL real: reemplazan la inicialización y las
 dependencias de persistencia cuando corresponde.
+
+### Análisis inteligente — `/api/v1/ai`
+
+El endpoint autenticado `POST /analysis` utiliza la API compatible con OpenAI de
+Z.AI. Crear una clave en [la consola de Z.AI](https://z.ai/manage-apikey/apikey-list)
+y configurar:
+
+```env
+ZAI_API_KEY=
+ZAI_MODEL=glm-5.3-flash
+ZAI_BASE_URL=https://api.z.ai/api/paas/v4
+ZAI_TIMEOUT_SECONDS=30
+```
+
+`glm-5.3-flash` es una opción gratuita publicada por Z.AI; los límites y precios
+pueden cambiar, por lo que deben comprobarse en su consola. Si no se configura
+`ZAI_API_KEY`, el endpoint responde `503` sin impedir el arranque del resto de la
+API. Nunca se registra ni se devuelve la clave.
+
+El body acepta `scope=inventory|sales|catalog|business`, `period`, `start_date`,
+`end_date`, `product_id`, `supplier_id`, `client_id`, `customer_type` y una
+`question` opcional. Solo se envían métricas agregadas del tenant autenticado; no se
+envían correos, nombres de usuarios, credenciales ni el nombre del esquema. La
+respuesta siempre se valida con la estructura `summary`, `insights` y
+`recommendations`. Z.AI es un tercero: antes de usar datos reales se deben revisar
+sus términos, retención y tratamiento de datos vigentes.
+
+Respuestas operativas: `400/422` para filtros inválidos, `401/403` para problemas de
+acceso, `502` para una respuesta inválida del proveedor y `503` para clave ausente,
+credenciales inválidas, rate limit o indisponibilidad temporal.
+
+La integración externa no se ejecuta durante la suite normal. Para comprobar una
+llamada real con la clave del `.env`, ejecutar explícitamente:
+
+```powershell
+$env:RUN_ZAI_INTEGRATION_TEST="1"
+python -m pytest tests/test_zai.py -k live -v
+```
