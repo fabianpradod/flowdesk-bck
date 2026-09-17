@@ -56,6 +56,125 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 
 No suba `.env` al repositorio. `.env.example` solo contiene valores de ejemplo.
 
+## HTTPS en producción
+
+Todo el endurecimiento de transporte está apagado por defecto, para que el
+desarrollo local y las pruebas sigan funcionando sobre HTTP plano. Se enciende
+por variables de entorno.
+
+| Variable | Efecto |
+|---|---|
+| `FORCE_HTTPS` | Redirige HTTP a HTTPS y envía `Strict-Transport-Security` |
+| `ALLOWED_HOSTS` | Lista separada por comas de hosts aceptados. Vacío desactiva la validación |
+| `HSTS_MAX_AGE` | Duración de HSTS en segundos. Por defecto 63072000, dos años |
+
+Las cabeceras `X-Content-Type-Options`, `X-Frame-Options` y `Referrer-Policy`
+se envían siempre, con o sin TLS.
+
+Dos detalles que importan al desplegar:
+
+- **HSTS solo sale con `FORCE_HTTPS` encendido.** Enviarlo mientras el sitio
+  todavía responde por HTTP deja al navegador negándose a abrir el host por
+  `http://`, y eso no se revierte desde el servidor.
+- **Detrás de un proxy que termina TLS, uvicorn necesita `--proxy-headers`.**
+  Sin eso ve HTTP plano, no reconoce `X-Forwarded-Proto` y la redirección entra
+  en bucle. El `CMD` del Dockerfile ya lo pasa, junto con
+  `--forwarded-allow-ips`.
+
+Activar `ALLOWED_HOSTS` antes de exponer el servicio: sin lista, el host del
+request no se valida.
+
+## Matriz de permisos
+
+Cuatro roles, jerárquicos: `employee` < `manager` < `admin` < `superadmin`.
+Cada nivel hereda todo lo del anterior.
+
+| Rol | Alcance |
+|---|---|
+| `employee` | Lectura de todo el tenant y CRUD de sus propias tareas |
+| `manager` | Además: crear y editar productos, proveedores y clientes; movimientos; importaciones; ventas |
+| `admin` | Además: desactivar y eliminar registros; gestión de usuarios y roles; reportes |
+| `superadmin` | Además: registro de empresas y consultas entre empresas |
+
+Detalle por endpoint. «Autenticado» significa cualquier usuario con sesión
+válida, es decir también `employee`.
+
+| Endpoint | Rol mínimo |
+|---|---|
+| `POST /api/v1/auth/login`, `/password/*` | Público |
+| `GET /health`, `GET /ready` | Público |
+| `POST /api/v1/auth/register` | `superadmin` estricto |
+| `GET /api/v1/companies` | `superadmin` estricto |
+| `POST /api/v1/auth/employees`, `GET /api/v1/auth/employees` | `admin` |
+| `POST /api/v1/auth/invitations/resend` | `admin` |
+| `GET/PUT/PATCH/DELETE /api/v1/users/*` | `admin` |
+| `GET /api/v1/roles` | `admin` |
+| `GET /api/v1/reports/*` | `admin` |
+| `GET /api/v1/inventory/products`, `/suppliers`, `/movements`, `/alerts` | Autenticado |
+| `GET /api/v1/inventory/suppliers/{id}`, `/supplier-products` | Autenticado |
+| `GET /api/v1/inventory/analytics/*`, `/metrics`, `/history` | `manager` |
+| `POST /api/v1/inventory/products`, `/suppliers`, `/movements`, `/products/import` | `manager` |
+| `PUT /api/v1/inventory/suppliers/{id}` | `manager` |
+| `PATCH /api/v1/inventory/products/{id}/status`, `/suppliers/{id}/status` | `admin` |
+| `DELETE /api/v1/inventory/suppliers/{id}` | `admin` |
+| `GET /api/v1/commercial/clients`, `/clients/{id}` | Autenticado |
+| `GET /api/v1/commercial/sales/{id}`, `/clients/{id}/purchases` | Autenticado |
+| `POST /api/v1/commercial/clients`, `/sales` | `manager` |
+| `PUT /api/v1/commercial/clients/{id}` | `manager` |
+| `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
+| `DELETE /api/v1/commercial/clients/{id}` | `admin` |
+| `GET/POST/PUT/PATCH/DELETE /api/v1/tasks/*` | Autenticado, y solo sobre tareas propias |
+
+Dos reglas del dependency que conviene tener presentes:
+
+- `require_role("manager")` admite además `admin` y `superadmin`, porque
+  `ELEVATED_ROLES` pasa por encima de cualquier lista de roles. Es lo que hace
+  que la jerarquía funcione sin enumerar roles en cada endpoint.
+- Por lo anterior, `require_role("superadmin")` **no** restringe a superadmin:
+  un `admin` también pasa. Para eso está `require_role("superadmin",
+  strict=True)`, que compara contra la lista exacta y no aplica la jerarquía.
+- `require_role()` sin argumentos deja pasar a cualquier usuario autenticado.
+  Es intencional para las lecturas del tenant, pero no es un guard de rol.
+
+Las restricciones por empresa son independientes del rol: `get_user_schema_name`
+resuelve el esquema desde `current_user.company`, así que ningún endpoint de
+inventario o comercial puede leer datos de otro tenant, sea cual sea su rol.
+
+## Desactivación de clientes y proveedores
+
+Clientes y proveedores no se borran: se desactivan. El registro conserva su
+historial y deja de aparecer en los listados por defecto.
+
+| Operación | Cliente | Proveedor |
+|---|---|---|
+| Desactivar | `PATCH /commercial/clients/{id}/status` con `is_active=false` | `PATCH /inventory/suppliers/{id}/status` |
+| Eliminar (soft delete) | `DELETE /commercial/clients/{id}` | `DELETE /inventory/suppliers/{id}` |
+| Listar por estado | `GET /commercial/clients?is_active=` | `GET /inventory/suppliers?is_active=` |
+
+Ambos exigen rol admin, y ambos responden 400 si el registro ya está en el
+estado solicitado.
+
+**Qué bloquea la desactivación.** Solo las relaciones en curso, nunca el
+historial:
+
+- Un proveedor no se desactiva mientras tenga productos activos asociados.
+- Un cliente no se desactiva mientras tenga ventas en estado `borrador`. Las
+  ventas `completada` y `cancelada` no lo impiden — conservarlas es justamente
+  el motivo del soft delete.
+
+**Nombres y correos.** Solo los registros activos reservan su nombre y su
+correo, en clientes y en proveedores por igual. Desactivar libera ambos, de modo
+que el nombre puede reutilizarse. Como contrapartida, reactivar falla con 400 si
+alguien tomó ese nombre mientras tanto; hay que renombrar antes de reactivar.
+
+Los índices únicos de `cliente` son parciales sobre `is_active`, así que la
+regla se sostiene también a nivel de base y no solo en el service.
+
+**Filtro de estado.** `?is_active=true` y `?is_active=false` filtran por estado
+exacto; omitirlo muestra solo los activos. En clientes se conserva `active_only`
+como alias histórico y está marcado como deprecado: `active_only=false` equivale
+a no filtrar.
+
 ## Contrato consumido por frontend
 
 La especificación completa está en `/docs`. Estos son los grupos principales:
@@ -69,6 +188,37 @@ La especificación completa está en `/docs`. Estos son los grupos principales:
 - `/api/v1/reports`: reportes de inventario, movimientos y alertas.
 
 ### Reportes — `/api/v1/reports`
+
+Todos los endpoints de reportes requieren rol admin o superior.
+
+| Método | Path | Notas |
+|---|---|---|
+| GET | `/history` | Historial de reportes generados. `?limit=` entre 1 y 100 (default 20) |
+| GET | `/inventario` | Stock actual. Filtros `?product_id=`, `?is_active=`, `?only_low_stock=` |
+| GET | `/movimientos` | Movimientos del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?product_id=`, `?movement_type=` |
+| GET | `/alertas` | Alertas del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?open_only=` |
+
+Los tres reportes aceptan `?format=csv` (default) o `?format=pdf` y responden con el
+archivo como descarga (`Content-Disposition: attachment`), no con JSON.
+
+`period` acepta `7d`, `30d` (default), `90d`, `6m`, `12m`, `ytd` o `custom`; con `custom` hay
+que enviar `start_date` y `end_date`, de lo contrario la API responde 400.
+
+Cada generación queda registrada en la tabla `reporte` del esquema de la empresa y se
+consulta con `GET /history`. El archivo no se almacena en el servidor — se transmite
+directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
+
+El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
+empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
+
+### Tareas
+
+Los estados válidos son `pendiente`, `en_progreso`, `completada` y `cancelada`;
+las prioridades son `baja`, `media`, `alta` y `urgente`. Todas las consultas se
+restringen al usuario y al esquema tenant autenticados.
+
+| Método | Path | Descripción |
+|---|---|---|
 
 Todos los endpoints de reportes requieren rol admin o superior.
 

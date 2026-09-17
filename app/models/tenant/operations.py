@@ -1,14 +1,33 @@
 import uuid
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.tenant.base import Base, TENANT_SCHEMA
 
 
-class Tarea(Base):
+class Task(Base):
     __tablename__ = "tarea"
-    __table_args__ = {"schema": TENANT_SCHEMA}
+    __table_args__ = (
+        CheckConstraint(
+            "estado IN ('pendiente', 'en_progreso', 'completada', 'cancelada')",
+            name="ck_tarea_estado_valid",
+        ),
+        CheckConstraint(
+            "prioridad IN ('baja', 'media', 'alta', 'urgente')",
+            name="ck_tarea_prioridad_valid",
+        ),
+        {"schema": TENANT_SCHEMA},
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     usuario_id = Column(UUID(as_uuid=True), ForeignKey("global.users.id"), nullable=False)
@@ -19,6 +38,10 @@ class Tarea(Base):
     prioridad = Column(String(20), nullable=False, server_default=text("'media'"))
     created_at = Column(DateTime, nullable=False, server_default=text("now()"))
     updated_at = Column(DateTime, nullable=False, server_default=text("now()"))
+
+
+# Backwards-compatible Spanish model name used by the original tenant registry.
+Tarea = Task
 
 
 class Reporte(Base):

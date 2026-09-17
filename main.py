@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import FRONTEND_URL
+from app.core.https import configure_transport_security
 from app.db.init_db import init_db
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
@@ -13,6 +14,10 @@ from app.api.v1.routes.inventory import router as inventory_router
 from app.api.v1.routes.commercial import router as commercial_router
 from app.api.v1.routes.intelligence import router as intelligence_router
 from app.api.v1.routes.analytics import router as analytics_router
+from app.api.v1.routes.reports import router as reports_router
+from app.api.v1.routes.tasks import router as tasks_router
+from app.api.v1.routes.companies import router as companies_router
+from app.api.v1.routes.system import router as system_router
 from app.utils.exceptions import build_error_payload
 
 app = FastAPI(
@@ -33,6 +38,10 @@ app = FastAPI(
 )
 
 init_db()
+
+# ─── transport security ───────────────────────────────────────────
+# No-op unless FORCE_HTTPS / ALLOWED_HOSTS are set, so local dev is unaffected.
+configure_transport_security(app)
 
 # ─── CORS ─────────────────────────────────────────────────────────
 _cors_origins = ["http://localhost:5173", "http://localhost:3000"]
@@ -72,6 +81,10 @@ app.include_router(inventory_router)
 app.include_router(commercial_router)
 app.include_router(intelligence_router)
 app.include_router(analytics_router)
+app.include_router(reports_router)
+app.include_router(tasks_router)
+app.include_router(companies_router)
+app.include_router(system_router)
 
 @app.get("/")
 def read_root():

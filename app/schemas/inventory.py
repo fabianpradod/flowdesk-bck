@@ -4,7 +4,9 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+from app.schemas.base import StrippedModel
 
 class MovementType(str, Enum):
     ENTRADA_COMPRAS = "entrada_compra"
@@ -15,18 +17,8 @@ class MovementType(str, Enum):
     SALIDA_MANUAL = "salida_manual"
     AJUSTE_NEGATIVO = "ajuste_negativo"
     DEVOLUCION_PROVEEDOR = "devolucion_proveedor"
-'''
-MovementType = Literal[
-    "entrada_compra",
-    "entrada_manual",
-    "ajuste_positivo",
-    "devolucion_cliente",
-    "salida_venta",
-    "salida_manual",
-    "ajuste_negativo",
-    "devolucion_proveedor",
-]
-'''
+
+
 AnalyticsPeriod = Literal["7d", "30d", "90d", "6m", "12m", "ytd", "custom"]
 AnalyticsWindow = Literal["day", "week", "month"]
 ProductAnalyticsSort = Literal[
@@ -38,16 +30,16 @@ ProductAnalyticsSort = Literal[
 ]
 
 
-class SupplierCreate(BaseModel):
+class SupplierCreate(StrippedModel):
     nombre: str = Field(min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
-    correo: str | None = Field(default=None, max_length=150)
+    correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
-class SupplierUpdate(BaseModel):
+class SupplierUpdate(StrippedModel):
     nombre: str | None = Field(default=None, min_length=1, max_length=100)
     telefono: str | None = Field(default=None, max_length=20)
-    correo: str | None = Field(default=None, max_length=150)
+    correo: EmailStr | None = Field(default=None, max_length=150)
     direccion: str | None = Field(default=None, max_length=200)
 
 class SupplierStatusUpdate(BaseModel):
@@ -65,11 +57,12 @@ class SupplierResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-class SupplierProductCreate(BaseModel):
+class SupplierProductCreate(StrippedModel):
     proveedor_id: UUID
     producto_id: UUID
     precio_cotizacion: Decimal = Field(
         ge=0,
+        max_digits=10,
         decimal_places=2,
     )
     descripcion: str | None = Field(
@@ -77,10 +70,11 @@ class SupplierProductCreate(BaseModel):
         max_length=1000,
     )
 
-class SupplierProductUpdate(BaseModel):
+class SupplierProductUpdate(StrippedModel):
     precio_cotizacion: Decimal | None = Field(
         default=None,
         ge=0,
+        max_digits=10,
         decimal_places=2,
     )
     descripcion: str | None = Field(
@@ -108,12 +102,12 @@ class SupplierProductResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProductCreate(BaseModel):
+class ProductCreate(StrippedModel):
     sku: str = Field(min_length=1, max_length=50)
     nombre: str = Field(min_length=1, max_length=100)
     descripcion: str | None = None
-    precio_venta: Decimal = Field(default=Decimal("0"), ge=0, decimal_places=2)
-    stock_minimo: Decimal = Field(default=Decimal("0"), ge=0, decimal_places=2)
+    precio_venta: Decimal = Field(default=Decimal("0"), ge=0, max_digits=10, decimal_places=2)
+    stock_minimo: Decimal = Field(default=Decimal("0"), ge=0, max_digits=12, decimal_places=2)
     unidad_medida: str = Field(default="unidad", min_length=1, max_length=20)
     proveedor_id: UUID | None = None
 
@@ -139,10 +133,10 @@ class ProductStatusUpdate(BaseModel):
     is_active: bool
 
 
-class InventoryMovementCreate(BaseModel):
+class InventoryMovementCreate(StrippedModel):
     producto_id: UUID
     tipo_movimiento: MovementType
-    cantidad: Decimal = Field(gt=0, decimal_places=2)
+    cantidad: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     motivo: str | None = Field(default=None, max_length=200)
     referencia_tipo: str | None = Field(default=None, max_length=30)
     referencia_id: UUID | None = None

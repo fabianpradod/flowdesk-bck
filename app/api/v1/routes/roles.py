@@ -14,6 +14,6 @@ router = APIRouter(prefix="/api/v1/roles", tags=["roles"])
         403: {"description": "Sin permisos"},
     }
 )
-def roles(db: Session = Depends(get_db), current_user=Depends(require_role("admin", "superadmin"))):
+def roles(db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
     """Retorna todos los roles disponibles en el sistema. Solo accesible para administradores y superadmin."""
     return db.query(Role).all()
