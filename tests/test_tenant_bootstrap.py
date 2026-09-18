@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 from app.models.tenant.base import Base, TENANT_SCHEMA
-from app.models.tenant.commercial import Cliente, DetalleVenta, Venta
+from app.models.tenant.commercial import Cliente, ConfiguracionTributaria, DetalleVenta, Venta
 from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor, ProveedorProducto
 from app.models.tenant.operations import Reporte, Tarea
 from app.models.companies import Company
@@ -83,6 +83,7 @@ def test_build_tenant_metadata_contains_expected_tables():
         "cliente",
         "venta",
         "detalle_venta",
+        "configuracion_tributaria",
         "tarea",
         "reporte",
     }
@@ -95,6 +96,7 @@ def test_build_tenant_metadata_contains_expected_tables():
         Cliente,
         Venta,
         DetalleVenta,
+        ConfiguracionTributaria,
         Tarea,
         Reporte,
     }

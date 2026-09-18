@@ -89,13 +89,12 @@ def test_sale_schema_rejects_duplicate_product_lines():
 
 def test_create_final_consumer_sale_is_atomic(monkeypatch):
     product = make_product()
-    db = FakeDB([[product]])
+    db = FakeDB([[product], [{"tasa_impuesto": Decimal("8.00")}]] )
     user = make_user()
     data = SaleCreate(
         cliente_id=None,
         items=[SaleItemCreate(producto_id=product["id"], cantidad=2)],
         descuento=Decimal("1"),
-        impuesto=Decimal("2"),
     )
     monkeypatch.setattr(commercial_service, "_sync_stock_alerts", lambda **_kwargs: None)
     monkeypatch.setattr(
