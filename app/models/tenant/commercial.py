@@ -47,6 +47,8 @@ class Venta(Base):
     subtotal = Column(Numeric(10, 2), nullable=False, server_default=text("0"))
     descuento = Column(Numeric(10, 2), nullable=False, server_default=text("0"))
     impuesto = Column(Numeric(10, 2), nullable=False, server_default=text("0"))
+    tasa_impuesto = Column(Numeric(5, 2), nullable=False, server_default=text("0"))
+    es_exenta = Column(Boolean, nullable=False, server_default=text("false"))
     total = Column(Numeric(10, 2), nullable=False, server_default=text("0"))
     estado = Column(String(20), nullable=False, server_default=text("'borrador'"))
     created_at = Column(DateTime, nullable=False, server_default=text("now()"))
@@ -66,3 +68,16 @@ class DetalleVenta(Base):
     cantidad = Column(Numeric(12, 2), nullable=False)
     precio_unitario = Column(Numeric(10, 2), nullable=False)
     subtotal = Column(Numeric(10, 2), nullable=False)
+
+
+class ConfiguracionTributaria(Base):
+    __tablename__ = "configuracion_tributaria"
+    __table_args__ = (
+        CheckConstraint("tasa_impuesto >= 0 AND tasa_impuesto <= 100", name="ck_configuracion_tributaria_tasa_range"),
+        {"schema": TENANT_SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tasa_impuesto = Column(Numeric(5, 2), nullable=False, server_default=text("0"))
+    created_at = Column(DateTime, nullable=False, server_default=text("now()"))
+    updated_at = Column(DateTime, nullable=False, server_default=text("now()"))

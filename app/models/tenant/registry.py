@@ -2,7 +2,7 @@ from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.tenant.base import Base, TENANT_SCHEMA
-from app.models.tenant.commercial import Cliente, DetalleVenta, Venta
+from app.models.tenant.commercial import Cliente, ConfiguracionTributaria, DetalleVenta, Venta
 from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor, ProveedorProducto
 from app.models.tenant.operations import Reporte, Tarea
 
@@ -14,6 +14,7 @@ TENANT_MODELS = (
     Cliente,
     Venta,
     DetalleVenta,
+    ConfiguracionTributaria,
     Tarea,
     Reporte,
     MovimientoInventario,
