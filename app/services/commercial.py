@@ -1,15 +1,18 @@
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, insert, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate
+from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate, TaxConfigurationUpdate
 from app.services.inventory import _sync_stock_alerts
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
+
+MONEY_QUANTUM = Decimal("0.01")
+MAX_TAX_RATE = Decimal("100")
 
 def list_clients(
     current_user,
@@ -260,17 +263,18 @@ def create_sale(data: SaleCreate, current_user, db: Session) -> dict:
         if stock_after < 0:
             raise AppError(status_code=400, message=f"Insufficient stock: {item.producto_id}")
         unit_price = _decimal(product["precio_venta"])
-        line_subtotal = (quantity * unit_price).quantize(Decimal("0.01"))
+        line_subtotal = _round_money(quantity * unit_price)
         subtotal += line_subtotal
         prepared_items.append((item, product, quantity, stock_before, stock_after, unit_price, line_subtotal))
 
-    discount = _decimal(data.descuento)
-    tax = _decimal(data.impuesto)
+    discount = _round_money(_decimal(data.descuento))
     if subtotal > Decimal("99999999.99"):
         raise AppError(status_code=400, message="Sale subtotal exceeds maximum allowed value")
     if discount > subtotal:
         raise AppError(status_code=400, message="Discount cannot exceed subtotal")
-    total = (subtotal - discount + tax).quantize(Decimal("0.01"))
+    tax_rate = _get_tax_rate(db, tables["configuracion_tributaria"])
+    tax = Decimal("0") if data.es_exenta else _round_money(subtotal * tax_rate / MAX_TAX_RATE)
+    total = _round_money(subtotal - discount + tax)
     if total > Decimal("99999999.99"):
         raise AppError(status_code=400, message="Sale total exceeds maximum allowed value")
     now = _utcnow()
@@ -286,6 +290,8 @@ def create_sale(data: SaleCreate, current_user, db: Session) -> dict:
                 subtotal=subtotal,
                 descuento=discount,
                 impuesto=tax,
+                tasa_impuesto=tax_rate,
+                es_exenta=data.es_exenta,
                 total=total,
                 estado="completada",
                 created_at=now,
@@ -372,6 +378,26 @@ def get_sale(sale_id: UUID, current_user, db: Session, *, client_name: str | Non
     ]
     return result
 
+def get_tax_configuration(current_user, db: Session) -> dict:
+    tables = _tenant_tables(current_user)
+    return {"tasa_impuesto": _get_tax_rate(db, tables["configuracion_tributaria"])}
+
+def update_tax_configuration(data: TaxConfigurationUpdate, current_user, db: Session) -> dict:
+    tables = _tenant_tables(current_user)
+    configuration = tables["configuracion_tributaria"]
+    rate = _decimal(data.tasa_impuesto)
+    now = _utcnow()
+    current = db.execute(select(configuration.c.id).limit(1)).first()
+    try:
+        if current is None:
+            db.execute(insert(configuration).values(id=uuid4(), tasa_impuesto=rate, created_at=now, updated_at=now))
+        else:
+            db.execute(update(configuration).where(configuration.c.id == current[0]).values(tasa_impuesto=rate, updated_at=now))
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AppError(status_code=500, message="Database error while updating tax configuration") from exc
+    return {"tasa_impuesto": rate}
 
 def list_client_purchases(
     client_id: UUID,
@@ -489,3 +515,12 @@ def _utcnow() -> datetime:
 
 def _decimal(value) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value))
+
+def _round_money(value: Decimal) -> Decimal:
+    return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+
+def _get_tax_rate(db: Session, configuration) -> Decimal:
+    row = db.execute(select(configuration.c.tasa_impuesto).limit(1)).mappings().first()
+    if row is None:
+        return Decimal("0")
+    return _decimal(row["tasa_impuesto"])
