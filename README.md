@@ -211,6 +211,15 @@ directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
 El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
 empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
 
+### Reglas tributarias configuración
+
+La configuración tributaria pertenece al esquema de cada tenant. Cualquier usuario
+autenticado puede consultarla con `GET /api/v1/commercial/tax-configuration`.
+Solo los roles `admin` y `superadmin` pueden modificarla mediante
+`PUT /api/v1/commercial/tax-configuration`, enviando `tasa_impuesto` entre 0.00 y
+100.00. Los tenants sin una configuración persistida usan una tasa efectiva de
+0.00 para preservar la compatibilidad con ventas anteriores.
+
 ### Tareas
 
 Los estados válidos son `pendiente`, `en_progreso`, `completada` y `cancelada`;
