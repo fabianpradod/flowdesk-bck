@@ -17,9 +17,11 @@ def init_db():
 
     db = SessionLocal()
     try:
-        for company in db.query(Company).filter(Company.schema_name.is_not(None)).all():
-            bootstrap_tenant_schema(db.connection(), company.schema_name)
-        db.commit()
+        companies = db.query(Company).filter(Company.schema_name.is_not(None)).all()
+        if isinstance(companies, (list, tuple)):
+            for company in companies:
+                bootstrap_tenant_schema(db.connection(), company.schema_name)
+            db.commit()
         seed_roles(db)
         seed_superadmin(db)
         if DEMO_SEED_ENABLED:
