@@ -16,7 +16,7 @@ from app.api.v1.routes.reports import router as reports_router
 from app.api.v1.routes.tasks import router as tasks_router
 from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.system import router as system_router
-from app.utils.exceptions import build_error_payload
+from app.utils.exceptions import build_error_payload, sanitize_validation_errors
 
 app = FastAPI(
     title = "FlowDesk API",
@@ -68,7 +68,7 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
         content={
             "message": "Invalid request format",
             "code": "validation_error",
-            "errors": exc.errors(),
+            "errors": sanitize_validation_errors(exc.errors()),
         },
     )
 
