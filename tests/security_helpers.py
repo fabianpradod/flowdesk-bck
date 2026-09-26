@@ -289,6 +289,16 @@ def client_for(user, db=None):
     return TestClient(app, raise_server_exceptions=False)
 
 
+def token_client(db):
+    """TestClient on the real app over `db`, keeping the real get_current_user so
+    the Authorization header is what decides who is calling."""
+    from main import app
+
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides.pop(get_current_user, None)
+    return TestClient(app, raise_server_exceptions=False)
+
+
 def call(session, key, value=None, **kwargs):
     method, path = key
     return session.request(method, fill_path(path, value or uuid4()), **kwargs)

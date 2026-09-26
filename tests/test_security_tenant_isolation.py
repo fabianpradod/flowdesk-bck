@@ -28,9 +28,8 @@ from tests.security_helpers import (
     request_kwargs,
     schemas_in,
     tenant_routes,
+    token_client,
 )
-from fastapi.testclient import TestClient
-from app.api.dependencies.auth import get_current_user, get_db
 
 TENANT_ROUTES = tenant_routes()
 
@@ -72,9 +71,7 @@ def test_the_schema_claims_in_the_token_are_ignored(key):
         "company_id": str(company_b.id),
         "schema_name": company_b.schema_name,
     })
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides.pop(get_current_user, None)
-    session = TestClient(app, raise_server_exceptions=False)
+    session = token_client(db)
 
     call(session, key, headers={"Authorization": f"Bearer {token}"}, **request_kwargs(key))
 
@@ -103,9 +100,7 @@ def test_a_user_of_an_inactive_company_is_refused_everywhere(key):
     user = make_user("admin", company)
     db = RecordingDB(query_rows={User: [user]})
     token = create_access_token({"sub": str(user.id)})
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides.pop(get_current_user, None)
-    session = TestClient(app, raise_server_exceptions=False)
+    session = token_client(db)
 
     response = call(session, key, headers={"Authorization": f"Bearer {token}"}, **request_kwargs(key))
 
@@ -138,3 +133,68 @@ def test_wrong_credentials_still_answer_401_for_an_inactive_company(client):
     )
 
     assert response.status_code == 401
+
+
+# Global tables
+
+@pytest.fixture
+def second_company():
+    """A second tenant in the shared seed, with its own admin and employee."""
+    db = app.state.test_db
+    admin_role, employee_role = db.data[User][1].role, db.data[User][3].role
+    company = Company(name="Otra Empresa", schema_name=f"tenant_{uuid4().hex}", is_active=True)
+    company.id = uuid4()
+    db.add(company)
+    users = []
+    for role, name in ((admin_role, "otra_admin"), (employee_role, "otra_employee")):
+        user = User(
+            username=name,
+            email=f"{name}@otra.com",
+            password="x",
+            role_id=role.id,
+            company_id=company.id,
+            is_active=True,
+        )
+        user.id = uuid4()
+        user.role = role
+        user.company = company
+        db.add(user)
+        users.append(user)
+    return company, users
+
+
+@pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/auth/employees"])
+def test_admin_listings_only_show_the_admins_company(admin_client, second_company, path):
+    company_b, _users = second_company
+
+    response = admin_client.get(path)
+
+    assert response.status_code == 200
+    company_ids = {row["company_id"] for row in response.json()}
+    assert str(company_b.id) not in company_ids
+    assert len(company_ids) == 1
+
+
+@pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/auth/employees"])
+def test_superadmin_listings_span_every_company(superadmin_client, second_company, path):
+    """Cross-company reads are what the superadmin role is for."""
+    company_b, _users = second_company
+
+    response = superadmin_client.get(path)
+
+    assert str(company_b.id) in {row["company_id"] for row in response.json()}
+
+
+def test_the_token_owner_is_resolved_from_the_database_not_the_claims():
+    """A token naming another role or company changes nothing: role and company
+    are read from the user row on every request."""
+    company = make_company()
+    user = make_user("employee", company)
+    db = RecordingDB(query_rows={User: [user]})
+    token = create_access_token({"sub": str(user.id), "role": "admin"}, expires_delta=timedelta(minutes=5))
+    response = token_client(db).get(
+        "/api/v1/users", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["message"] == "Insufficient permissions"
