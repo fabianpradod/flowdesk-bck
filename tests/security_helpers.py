@@ -5,11 +5,13 @@ checks it against the routes the app really registers, so a new endpoint cannot
 ship without being classified here first.
 """
 
+import re
 from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from sqlalchemy.dialects import postgresql
 
 from app.api.dependencies.auth import get_current_user, get_db
 
@@ -210,10 +212,13 @@ class RecordingDB:
     data, or which tenant schema it reached.
     """
 
-    def __init__(self):
+    def __init__(self, query_rows=None):
         self.statements = []
         self.queried = []
         self.commits = 0
+        # ORM rows to hand back per model, e.g. {User: [user]} so the real
+        # get_current_user can find the token's owner.
+        self.query_rows = query_rows or {}
 
     def execute(self, statement, *_args, **_kwargs):
         self.statements.append(statement)
@@ -221,7 +226,7 @@ class RecordingDB:
 
     def query(self, model):
         self.queried.append(model)
-        return FakeQuery()
+        return FakeQuery(self.query_rows.get(model, ()))
 
     def add(self, _obj):
         pass
@@ -291,3 +296,65 @@ def call(session, key, value=None, **kwargs):
 
 def refused_by_guard(response) -> bool:
     return response.status_code == 403 and response.json().get("message") == GUARD_REFUSAL
+
+
+TENANT_PREFIXES = (
+    "/api/v1/inventory",
+    "/api/v1/commercial",
+    "/api/v1/reports",
+    "/api/v1/tasks",
+)
+
+_SCHEMA_RE = re.compile(r"tenant_[0-9a-f]{32}")
+
+
+def tenant_routes(policy=ROUTE_POLICY):
+    return [key for key in protected_routes(policy) if key[1].startswith(TENANT_PREFIXES)]
+
+
+def schemas_in(statements) -> set[str]:
+    """Tenant schemas named by a list of executed Core statements."""
+    found = set()
+    for statement in statements:
+        sql = str(statement.compile(dialect=postgresql.dialect()))
+        found.update(_SCHEMA_RE.findall(sql))
+    return found
+
+
+def request_kwargs(key, ref=None) -> dict:
+    """A request body that passes validation for `key`, so the call reaches the
+    service. `ref` is used for every id the body points at, which lets the
+    cross-tenant tests aim all of them at another company's records at once."""
+    ref = str(ref or uuid4())
+    method, path = key
+    bodies = {
+        ("POST", "/api/v1/inventory/suppliers"): {"nombre": "Acme"},
+        ("PUT", "/api/v1/inventory/suppliers/{supplier_id}"): {"nombre": "Acme 2"},
+        ("PATCH", "/api/v1/inventory/suppliers/{supplier_id}/status"): {"is_active": False},
+        ("POST", "/api/v1/inventory/products"): {"sku": "sku-1", "nombre": "Prod", "proveedor_id": ref},
+        ("PATCH", "/api/v1/inventory/products/{product_id}/status"): {"is_active": False},
+        ("POST", "/api/v1/inventory/movements"): {
+            "producto_id": ref, "tipo_movimiento": "entrada_manual", "cantidad": "1",
+        },
+        ("POST", "/api/v1/commercial/clients"): {"nombre": "Cliente"},
+        ("PUT", "/api/v1/commercial/clients/{client_id}"): {"nombre": "Cliente 2"},
+        ("PATCH", "/api/v1/commercial/clients/{client_id}/status"): {"is_active": False},
+        ("POST", "/api/v1/commercial/sales"): {
+            "cliente_id": ref, "items": [{"producto_id": ref, "cantidad": "1"}],
+        },
+        ("POST", "/api/v1/tasks"): {"titulo": "Tarea"},
+        ("PUT", "/api/v1/tasks/{task_id}"): {"titulo": "Tarea 2"},
+        ("PATCH", "/api/v1/tasks/{task_id}/status"): {"estado": "completada"},
+        ("POST", "/api/v1/auth/register"): {
+            "name": "Otra", "admin_email": "otra@test.com", "admin_username": "otra_admin",
+        },
+        ("POST", "/api/v1/auth/employees"): {"username": "nuevo", "email": "nuevo@test.com", "role_id": 4},
+        ("POST", "/api/v1/auth/invitations/resend"): {"email": "nadie@test.com"},
+        ("PUT", "/api/v1/users/{user_id}"): {"username": "renombrado"},
+        ("PATCH", "/api/v1/users/{user_id}/status"): {"is_active": False},
+    }
+    if key == ("POST", "/api/v1/inventory/products/import"):
+        return {"files": {"file": ("productos.csv", b"sku,nombre\nsku-1,Prod\n", "text/csv")}}
+    if key in bodies:
+        return {"json": bodies[key]}
+    return {}
