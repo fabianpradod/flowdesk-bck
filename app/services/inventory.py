@@ -185,9 +185,10 @@ def update_supplier(data: SupplierUpdate, current_user: User, db: Session, suppl
     try:
         db.execute(update(suppliers).where(suppliers.c.id == supplier_id).values(**changes))
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Failed to update supplier: {str(e)}")
+        logger.exception("Failed to update supplier %s", supplier_id)
+        raise AppError(500, "Failed to update supplier")
 
     return _fetch_supplier(db, suppliers, supplier_id)
 
@@ -262,9 +263,10 @@ def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool) -
             .values(is_active=is_active, updated_at=_utcnow())
         )
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Failed to update supplier status: {str(e)}")
+        logger.exception("Failed to update supplier status %s", supplier_id)
+        raise AppError(500, "Failed to update supplier status")
 
 
 def list_products(current_user: User, db: Session) -> list[dict]:
@@ -393,12 +395,10 @@ def create_supplier_product(data: SupplierProductCreate, current_user: User, db:
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(
-            status_code=500,
-            message=f"Failed to create supplier product: {str(e)}",
-        )
+        logger.exception("Failed to create supplier product")
+        raise AppError(status_code=500, message="Failed to create supplier product")
 
     return dict(result)
 
@@ -541,12 +541,10 @@ def update_supplier_product(data: SupplierProductUpdate, current_user: User, db:
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(
-            status_code=500,
-            message=f"Failed to update supplier product: {str(e)}",
-        )
+        logger.exception("Failed to update supplier product %s", supplier_product_id)
+        raise AppError(status_code=500, message="Failed to update supplier product")
 
     return dict(result)
 
@@ -582,12 +580,10 @@ def delete_supplier_product(
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(
-            status_code=500,
-            message=f"Failed to delete supplier product: {str(e)}",
-        )
+        logger.exception("Failed to delete supplier product %s", supplier_product_id)
+        raise AppError(status_code=500, message="Failed to delete supplier product")
 
     return None
 
@@ -958,9 +954,10 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
             now=now,
         )
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Inventory movement failed: {str(e)}")
+        logger.exception("Inventory movement failed for product %s", data.producto_id)
+        raise AppError(500, "Inventory movement failed")
 
     row = db.execute(
         select(movements).where(movements.c.id == movement_id)
@@ -1458,9 +1455,10 @@ def update_product_status(current_user: User, db: Session, product_id, is_active
             .values(is_active=is_active, updated_at=now)
         )
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Failed to update product status: {str(e)}")
+        logger.exception("Failed to update product status %s", product_id)
+        raise AppError(500, "Failed to update product status")
 
     updated = db.execute(
         select(products).where(products.c.id == product_id)
