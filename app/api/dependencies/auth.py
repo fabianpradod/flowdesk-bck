@@ -23,7 +23,9 @@ def get_db() -> Generator:
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     payload = decode_access_token(token)
-    if not payload:
+    # Invitation and reset links are signed with the same key and live 48h. They
+    # carry a purpose claim and must never open a session.
+    if not payload or payload.get("purpose"):
         raise AppError(status_code=401, message="Invalid or expired token")
 
     user = db.query(User).filter(User.id == payload["sub"]).first()
