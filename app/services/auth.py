@@ -184,8 +184,12 @@ def set_password(token: str, new_password: str, db: Session) -> dict:
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(status_code=404, message="User not found")
+    # Pending users are created with an empty password. Once one is set the
+    # invitation is spent: reusing it would overwrite the password and, for an
+    # account an admin deactivated, turn it back on.
+    if user.password:
+        raise AppError(status_code=400, message="Invitation already used")
 
-    validate_password_reuse(user, new_password)
     user.password = hash_password(new_password)
     user.is_active = True
     db.commit()
