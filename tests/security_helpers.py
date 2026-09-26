@@ -5,9 +5,13 @@ checks it against the routes the app really registers, so a new endpoint cannot
 ship without being classified here first.
 """
 
-from fastapi.routing import APIRoute
+from types import SimpleNamespace
+from uuid import uuid4
 
-from app.api.dependencies.auth import get_current_user
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+from app.api.dependencies.auth import get_current_user, get_db
 
 PUBLIC = "public"
 AUTHENTICATED = "authenticated"
@@ -142,3 +146,148 @@ def fill_path(path: str, value) -> str:
     for part in path.split("/"):
         parts.append(str(value) if part.startswith("{") and part.endswith("}") else part)
     return "/".join(parts)
+
+
+# Refusal message raised by require_role. Other 403s (inactive company, user with
+# no tenant) come from elsewhere and are not a role decision.
+GUARD_REFUSAL = "Insufficient permissions"
+
+
+class FakeResult:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def one(self):
+        return self.rows[0]
+
+    def one_or_none(self):
+        return self.rows[0] if self.rows else None
+
+    def scalar(self):
+        return None
+
+    def scalar_one(self):
+        return 0
+
+    def all(self):
+        return self.rows
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class FakeQuery:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def join(self, *_args, **_kwargs):
+        return self
+
+    def order_by(self, *_args, **_kwargs):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+
+class RecordingDB:
+    """Answers every read with no rows and records what was asked.
+
+    `statements` holds each Core statement passed to execute and `queried` each
+    ORM model passed to query, so a test can prove a request never reached the
+    data, or which tenant schema it reached.
+    """
+
+    def __init__(self):
+        self.statements = []
+        self.queried = []
+        self.commits = 0
+
+    def execute(self, statement, *_args, **_kwargs):
+        self.statements.append(statement)
+        return FakeResult()
+
+    def query(self, model):
+        self.queried.append(model)
+        return FakeQuery()
+
+    def add(self, _obj):
+        pass
+
+    def flush(self):
+        pass
+
+    def refresh(self, _obj):
+        pass
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        pass
+
+    def connection(self):
+        return None
+
+    @property
+    def touched(self) -> bool:
+        return bool(self.statements or self.queried)
+
+
+def make_company(*, is_active=True, name="Acme"):
+    company_id = uuid4()
+    return SimpleNamespace(
+        id=company_id,
+        name=name,
+        schema_name=f"tenant_{company_id.hex}",
+        is_active=is_active,
+    )
+
+
+def make_user(role_name, company=None, *, is_active=True):
+    """A user as get_current_user would return it.
+
+    A superadmin gets no company unless one is passed, like the seeded one.
+    """
+    if company is None and role_name != "superadmin":
+        company = make_company()
+    return SimpleNamespace(
+        id=uuid4(),
+        username=f"{role_name}_{uuid4().hex[:6]}",
+        email=f"{role_name}.{uuid4().hex[:6]}@test.com",
+        company_id=company.id if company else None,
+        company=company,
+        is_active=is_active,
+        role=SimpleNamespace(name=role_name) if role_name else None,
+    )
+
+
+def client_for(user, db=None):
+    """TestClient on the real app, signed in as `user`, over a RecordingDB."""
+    from main import app
+
+    db = db if db is not None else RecordingDB()
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def call(session, key, value=None, **kwargs):
+    method, path = key
+    return session.request(method, fill_path(path, value or uuid4()), **kwargs)
+
+
+def refused_by_guard(response) -> bool:
+    return response.status_code == 403 and response.json().get("message") == GUARD_REFUSAL
