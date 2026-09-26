@@ -7,7 +7,6 @@ tables (users, companies) are shared, so their filters are checked separately.
 """
 
 from datetime import timedelta
-from uuid import uuid4
 
 import pytest
 
@@ -20,6 +19,7 @@ from tests.security_helpers import (
     ALLOWED_ROLES,
     ROUTE_POLICY,
     RecordingDB,
+    add_company_with_users,
     call,
     client_for,
     make_company,
@@ -139,28 +139,7 @@ def test_wrong_credentials_still_answer_401_for_an_inactive_company(client):
 
 @pytest.fixture
 def second_company():
-    """A second tenant in the shared seed, with its own admin and employee."""
-    db = app.state.test_db
-    admin_role, employee_role = db.data[User][1].role, db.data[User][3].role
-    company = Company(name="Otra Empresa", schema_name=f"tenant_{uuid4().hex}", is_active=True)
-    company.id = uuid4()
-    db.add(company)
-    users = []
-    for role, name in ((admin_role, "otra_admin"), (employee_role, "otra_employee")):
-        user = User(
-            username=name,
-            email=f"{name}@otra.com",
-            password="x",
-            role_id=role.id,
-            company_id=company.id,
-            is_active=True,
-        )
-        user.id = uuid4()
-        user.role = role
-        user.company = company
-        db.add(user)
-        users.append(user)
-    return company, users
+    return add_company_with_users(app.state.test_db)
 
 
 @pytest.mark.parametrize("path", ["/api/v1/users", "/api/v1/auth/employees"])

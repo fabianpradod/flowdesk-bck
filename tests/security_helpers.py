@@ -368,3 +368,36 @@ def request_kwargs(key, ref=None) -> dict:
     if key in bodies:
         return {"json": bodies[key]}
     return {}
+
+
+def add_company_with_users(db, *roles):
+    """Add a second tenant to the conftest seed, with one active user per role.
+
+    Returns the company and its users. Roles are taken from the seeded users so
+    the new ones carry the same Role objects the services compare against.
+    """
+    from app.models.companies import Company
+    from app.models.roles import Role
+    from app.models.users import User
+
+    by_name = {role.name: role for role in db.data[Role]}
+    company = Company(name="Otra Empresa", schema_name=f"tenant_{uuid4().hex}", is_active=True)
+    company.id = uuid4()
+    db.add(company)
+    users = []
+    for role_name in roles or ("admin", "employee"):
+        role = by_name[role_name]
+        user = User(
+            username=f"otra_{role_name}",
+            email=f"{role_name}@otra.com",
+            password="hash",
+            role_id=role.id,
+            company_id=company.id,
+            is_active=True,
+        )
+        user.id = uuid4()
+        user.role = role
+        user.company = company
+        db.add(user)
+        users.append(user)
+    return company, users
