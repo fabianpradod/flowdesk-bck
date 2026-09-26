@@ -40,6 +40,8 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(404, "User not found")
+    if user.id == current_user.id:
+        raise AppError(400, "Cannot change your own status")
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
