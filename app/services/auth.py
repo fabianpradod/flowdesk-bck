@@ -137,7 +137,9 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
             code="invalid_employee_role",
         )
 
-    existing = db.query(User).filter(User.email == data.email, User.company_id == target_company_id).first()
+    # Emails are unique across companies: login finds the user by email alone.
+    # Checking only this company let the insert hit the unique index, a 500.
+    existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise AppError(status_code=400, message="Email already registered")
 
