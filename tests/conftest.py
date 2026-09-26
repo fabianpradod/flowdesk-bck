@@ -1,6 +1,7 @@
 import importlib
 import sys
 from datetime import datetime, timezone
+from functools import lru_cache
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -111,6 +112,12 @@ def _matches_expression(obj, expr) -> bool:
 
     return str(actual) == str(expected)
 
+@lru_cache(maxsize=None)
+def _demo_password_hash() -> str:
+    # bcrypt is slow on purpose. Hashing once per session keeps the autouse seed
+    # cheap, and every seeded user shares the same demo password anyway.
+    return hash_password(DEMO_USER_PASSWORD)
+
 def _seed_fake_db() -> FakeDB:
     now = datetime.now(timezone.utc)
 
@@ -154,7 +161,7 @@ def _seed_fake_db() -> FakeDB:
     superadmin = User(
         username="superadmin",
         email="superadmin@test.com",
-        password=hash_password(DEMO_USER_PASSWORD),
+        password=_demo_password_hash(),
         role_id=superadmin_role.id,
         company_id=None,
         is_active=True,
@@ -167,7 +174,7 @@ def _seed_fake_db() -> FakeDB:
     admin = User(
         username="demo_admin",
         email="admin.demo@flowdesk.com",
-        password=hash_password(DEMO_USER_PASSWORD),
+        password=_demo_password_hash(),
         role_id=admin_role.id,
         company_id=company.id,
         is_active=True,
@@ -180,7 +187,7 @@ def _seed_fake_db() -> FakeDB:
     manager = User(
         username="demo_manager",
         email="manager.demo@flowdesk.com",
-        password=hash_password(DEMO_USER_PASSWORD),
+        password=_demo_password_hash(),
         role_id=manager_role.id,
         company_id=company.id,
         is_active=True,
@@ -193,7 +200,7 @@ def _seed_fake_db() -> FakeDB:
     employee = User(
         username="demo_employee",
         email="employee.demo@flowdesk.com",
-        password=hash_password(DEMO_USER_PASSWORD),
+        password=_demo_password_hash(),
         role_id=employee_role.id,
         company_id=company.id,
         is_active=True,
@@ -206,7 +213,7 @@ def _seed_fake_db() -> FakeDB:
     inactive_user = User(
         username="inactive_user",
         email="inactive@test.com",
-        password=hash_password(DEMO_USER_PASSWORD),
+        password=_demo_password_hash(),
         role_id=employee_role.id,
         company_id=company.id,
         is_active=False,
