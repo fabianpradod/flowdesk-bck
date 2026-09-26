@@ -7,7 +7,7 @@ from app.models.companies import Company
 from app.schemas.users import UserCreate
 from app.utils.exceptions import AppError
 from app.schemas.companies import CompanyCreate
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, token_subject
 from app.utils.email import send_password_set_email, send_password_reset_email
 from app.core.security import hash_password, verify_password, create_access_token
 from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
@@ -177,10 +177,11 @@ def set_password(token: str, new_password: str, db: Session) -> dict:
 
     payload = decode_access_token(token)
 
-    if not payload or payload.get("purpose") != "set_password":
+    user_id = token_subject(payload) if payload else None
+    if not payload or payload.get("purpose") != "set_password" or user_id is None:
         raise AppError(status_code=400, message="Invalid or expired token")
 
-    user = db.query(User).filter(User.id == payload["sub"]).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(status_code=404, message="User not found")
 
@@ -194,10 +195,11 @@ def set_password(token: str, new_password: str, db: Session) -> dict:
 def reset_password(token: str, new_password: str, db: Session) -> dict:
     payload = decode_access_token(token)
 
-    if not payload or payload.get("purpose") != "reset_password":
+    user_id = token_subject(payload) if payload else None
+    if not payload or payload.get("purpose") != "reset_password" or user_id is None:
         raise AppError(status_code=400, message="Invalid or expired token")
 
-    user = db.query(User).filter(User.id == payload["sub"]).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(status_code=404, message="User not found")
 
