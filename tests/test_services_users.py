@@ -145,7 +145,7 @@ def test_update_user_cross_company_forbidden(seed_test_db):
             admin,
         )
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 def test_update_superadmin_user_forbidden(seed_test_db):
     db = seed_test_db
@@ -272,7 +272,7 @@ def test_update_user_status_cross_company_forbidden(seed_test_db):
             admin,
         )
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 def test_update_superadmin_status_forbidden(seed_test_db):
     db = seed_test_db
@@ -360,7 +360,7 @@ def test_delete_user_cross_company_forbidden(seed_test_db):
             admin,
         )
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
 
 def test_delete_superadmin_forbidden(seed_test_db):
     db = seed_test_db
