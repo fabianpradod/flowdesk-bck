@@ -1219,7 +1219,11 @@ def _resolve_analytics_range(
     elif period == "ytd":
         resolved_start = datetime(resolved_end.year, 1, 1, tzinfo=timezone.utc)
     else:
-        resolved_start = resolved_end - timedelta(days=PERIOD_DAYS[period])
+        try:
+            resolved_start = resolved_end - timedelta(days=PERIOD_DAYS[period])
+        except OverflowError:
+            # An end_date in the first days of year 1 leaves no room for the period.
+            raise AppError(status_code=400, message="end_date is too early for the selected period")
 
     if resolved_start > resolved_end:
         raise AppError(status_code=400, message="start_date must be before end_date")
