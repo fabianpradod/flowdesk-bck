@@ -44,23 +44,28 @@ están en `main` (ver F12), infraestructura y dependencias.
 documentados como recomendación y 1 en seguimiento hasta que se integre el módulo
 nuevo de analítica.
 
+Estados: **Verificado** es corregido y comprobado contra PostgreSQL real en la
+validación final. **Corregido** es corregido y cubierto por pruebas automatizadas,
+pero no se puede reproducir en vivo sin inyectar una falla (una excepción inesperada,
+la base caída o el SMTP caído).
+
 | Id | Sev. | Área | Hallazgo | Estado |
 |---|---|---|---|---|
-| F01 | Alta | Autenticación | Los tokens de invitación y de recuperación servían como token de acceso | Corregido |
-| F02 | Alta | Autenticación | Una invitación vieja reactivaba una cuenta desactivada y reemplazaba su contraseña | Corregido |
-| F03 | Alta | Errores | Un error de validación con límites decimales o validadores propios respondía 500 | Corregido |
+| F01 | Alta | Autenticación | Los tokens de invitación y de recuperación servían como token de acceso | Verificado |
+| F02 | Alta | Autenticación | Una invitación vieja reactivaba una cuenta desactivada y reemplazaba su contraseña | Verificado |
+| F03 | Alta | Errores | Un error de validación con límites decimales o validadores propios respondía 500 | Verificado |
 | F04 | Media | Errores | Siete endpoints de inventario devolvían el texto del error de base de datos | Corregido |
-| F05 | Media | Errores | Las respuestas 422 repetían el cuerpo enviado, contraseñas incluidas | Corregido |
-| F06 | Media | Aislamiento | Reenviar invitación revelaba si un usuario de otra empresa existía y si estaba activo | Corregido |
-| F07 | Media | Aislamiento | Crear un empleado con un correo de otra empresa respondía 500 | Corregido |
-| F08 | Media | Errores | Renombrar un usuario con un username ocupado respondía 500 | Corregido |
-| F09 | Media | Analítica | Fechas cercanas al año 1 desbordaban el cálculo del rango y respondían 500 | Corregido |
-| F10 | Media | Aislamiento | Usuarios de una empresa inactiva podían iniciar sesión y usar las rutas globales | Corregido |
-| F11 | Media | Aislamiento | Un id de usuario de otra empresa respondía 403 y uno inexistente 404 | Corregido |
+| F05 | Media | Errores | Las respuestas 422 repetían el cuerpo enviado, contraseñas incluidas | Verificado |
+| F06 | Media | Aislamiento | Reenviar invitación revelaba si un usuario de otra empresa existía y si estaba activo | Verificado |
+| F07 | Media | Aislamiento | Crear un empleado con un correo de otra empresa respondía 500 | Verificado |
+| F08 | Media | Errores | Renombrar un usuario con un username ocupado respondía 500 | Verificado |
+| F09 | Media | Analítica | Fechas cercanas al año 1 desbordaban el cálculo del rango y respondían 500 | Verificado |
+| F10 | Media | Aislamiento | Usuarios de una empresa inactiva podían iniciar sesión y usar las rutas globales | Verificado |
+| F11 | Media | Aislamiento | Un id de usuario de otra empresa respondía 403 y uno inexistente 404 | Verificado |
 | F12 | Media | Analítica | Las rutas nuevas de `/api/v1/analytics` y `/api/v1/ai` solo exigen sesión | Seguimiento |
-| F13 | Baja | Autenticación | Un token sin `sub` válido respondía 500 | Corregido |
+| F13 | Baja | Autenticación | Un token sin `sub` válido respondía 500 | Verificado |
 | F14 | Baja | Errores | Las excepciones no controladas respondían texto plano fuera del contrato JSON | Corregido |
-| F15 | Baja | Autorización | Un admin podía desactivar su propia cuenta con `PATCH /users/{id}/status` | Corregido |
+| F15 | Baja | Autorización | Un admin podía desactivar su propia cuenta con `PATCH /users/{id}/status` | Verificado |
 | F16 | Baja | Errores | `/ready` respondía 500 con la base caída | Corregido |
 | F17 | Baja | Errores | Los fallos de correo se imprimían por consola con la dirección del destinatario | Corregido |
 | F18 | Media | Autenticación | `/auth/login` no limita intentos fallidos | Recomendación |
@@ -250,4 +255,39 @@ clasifiquen en `ROUTE_POLICY`: es el aviso buscado.
 
 ## Validación final
 
-Pendiente.
+**Suite completa.** 1915 pruebas en verde, contra 656 en `main`: 1259 nuevas de
+seguridad. Corre en unos 13 segundos, porque la semilla de pruebas ahora calcula el
+hash bcrypt una sola vez por sesión en lugar de cinco veces por prueba.
+
+**Ejecución en vivo.** Un PostgreSQL 16 descartable en un puerto propio, dos copias
+del código (`main` en `efb82ae` y esta rama) y el mismo guion HTTP contra ambas. El
+superadmin registra dos empresas; cada una recibe un admin, un manager y un
+employee que activan su cuenta con la invitación, y datos propios: proveedor,
+producto, movimiento, cliente, venta y tarea. Los correos se capturaron en un
+archivo local, no se envió ninguno, y no se usó la base configurada en `.env`.
+
+| Grupo | Comprobaciones | `main` | Esta rama |
+|---|---|---|---|
+| Rutas protegidas sin token, token vencido y firma ajena | 3 | 3 | 3 |
+| Roles permitidos, roles negados y escalamiento | 11 | 11 | 11 |
+| Listados de usuarios, productos y clientes por empresa | 3 | 3 | 3 |
+| Ids de otra empresa en rutas, cuerpos, filtros y reportes | 25 | 25 | 25 |
+| Analítica: cada empresa solo suma lo suyo | 4 | 4 | 4 |
+| Reproducción de F01, F02, F03, F05 a F11, F13, F15 y F16 | 25 | 3 | 25 |
+| Preparación | 1 | 1 | 1 |
+| **Total** | **72** | **50** | **72** |
+
+La primera comprobación de la tabla recorre en una sola pasada las 48 rutas
+protegidas.
+
+Las 22 fallas de `main` son exactamente los hallazgos: ninguna comprobación falla por
+otro motivo, y el aislamiento entre empresas en las tablas `tenant_*` ya se sostenía
+antes de esta revisión. El log del servidor de `main` registró 8 excepciones no
+controladas durante la ejecución; el de esta rama, ninguna.
+
+Dos hallazgos solo se ven completos contra PostgreSQL real, porque la base simulada
+de las pruebas no los reproduce:
+
+- F13: un `sub` que no es UUID llega a la base, que falla al convertirlo y responde
+  500.
+- F07: el índice único de `users.email` rechaza el insert y responde 500.
