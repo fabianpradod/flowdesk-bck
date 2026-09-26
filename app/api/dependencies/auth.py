@@ -46,6 +46,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             message="Account is inactive"
         )
 
+    # Tenant routes already refuse an inactive company when resolving the schema,
+    # but the global ones (users, employees, roles) never resolve it.
+    if user.company is not None and not user.company.is_active:
+        raise AppError(status_code=403, message="Company is inactive")
+
     return user
 
 def require_role(*roles: str, strict: bool = False):

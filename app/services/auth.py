@@ -99,6 +99,8 @@ def login(email: str, password: str, db: Session) -> dict:
         raise AppError(status_code=403, message="Password not set yet, check your email")
 
     company = db.query(Company).filter(Company.id == user.company_id).first() if user.company_id else None
+    if company is not None and not company.is_active:
+        raise AppError(status_code=403, message="Company is inactive")
 
     token = create_access_token({
         "sub": str(user.id),
