@@ -228,9 +228,11 @@ def test_demo_seed_is_skipped_when_disabled():
         patch.object(init_db, "seed_superadmin"),
         patch.object(init_db, "seed_demo_data") as seed_demo_mock,
         patch.object(init_db, "DEMO_SEED_ENABLED", False),
+        patch.object(init_db, "maintain_chat") as maintain_chat_mock,
     ):
         init_db.init_db()
 
     connection.execute.assert_called()
     seed_demo_mock.assert_not_called()
+    maintain_chat_mock.assert_called_once_with(engine, upgrade=True)
     session.close.assert_called_once()

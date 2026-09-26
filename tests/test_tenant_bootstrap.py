@@ -85,6 +85,8 @@ def test_build_tenant_metadata_contains_expected_tables():
         "detalle_venta",
         "tarea",
         "reporte",
+        "chat_conversation",
+        "chat_message",
     }
     tenant_models = {
         Proveedor,

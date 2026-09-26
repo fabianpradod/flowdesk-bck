@@ -1,5 +1,12 @@
 # Flowdesk Backend
 
+El Chatbot del Sprint 8 está documentado en
+[el contrato de chat](docs/ai-chat-contract.md) y
+[el plan acordado](docs/plans/sprint8-ai-chat.md). Incluye herramientas de consulta,
+chat e historial privado para managers/admins, con caducidad de 15 días desde el
+último mensaje. Ver [pruebas y despliegue](docs/ai-chat-qa.md); la validación con
+el modelo real sigue pendiente del saldo de Z.AI.
+
 API REST multi-tenant construida con FastAPI, PostgreSQL y SQLAlchemy para
 inventario, usuarios, clientes y tareas.
 
