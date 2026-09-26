@@ -72,6 +72,16 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
         },
     )
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, _exc: Exception):
+    # Starlette re-raises the exception after sending this response, so the server
+    # still logs the traceback. The client only gets the generic contract.
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal server error", "code": "internal_error", "errors": []},
+    )
+
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(roles_router)
