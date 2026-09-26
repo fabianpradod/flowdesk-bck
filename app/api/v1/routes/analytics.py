@@ -2,7 +2,7 @@ from datetime import date
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from app.api.dependencies.auth import get_current_user, get_db
+from app.api.dependencies.auth import get_db, require_role
 from app.models.users import User
 from app.schemas.analytics import InventoryRiskDistributionResponse, ProductCreationTrendResponse, SalesCustomerType, SalesMetricsResponse, SalesTrendResponse, TopSellingProductsResponse
 from app.schemas.inventory import AnalyticsPeriod, AnalyticsWindow
@@ -23,7 +23,7 @@ def sales_metrics(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return analytics_service.get_sales_metrics(
         current_user,
@@ -49,7 +49,7 @@ def sales_trend(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return analytics_service.get_sales_trend(
         current_user,
@@ -74,7 +74,7 @@ def inventory_risk_distribution(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return analytics_service.get_inventory_risk_distribution(
         current_user,
@@ -104,7 +104,7 @@ def top_selling_products(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return analytics_service.get_top_selling_products(
         current_user,
@@ -136,7 +136,7 @@ def product_creation_trend(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
 ):
     return analytics_service.get_product_creation_trend(
         current_user,

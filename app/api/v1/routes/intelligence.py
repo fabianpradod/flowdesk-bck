@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from app.api.dependencies.auth import get_current_user, get_db
+from app.api.dependencies.auth import get_db, require_role
 from app.models.users import User
 from app.schemas.intelligence import IntelligentAnalysisRequest, IntelligentAnalysisResponse
 from app.services import intelligence as intelligence_service
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai-analysis"])
 def create_intelligent_analysis(
     data: IntelligentAnalysisRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("manager")),
     provider: AnalysisProvider = Depends(intelligence_service.get_analysis_provider),
 ):
     return intelligence_service.create_intelligent_analysis(
