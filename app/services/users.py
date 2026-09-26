@@ -23,7 +23,11 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
         raise AppError(404, "User not found")
 
-    if data.username is not None:
+    if data.username is not None and data.username != user.username:
+        # Usernames are unique across companies; without this check the unique
+        # index caught the duplicate and the request answered 500.
+        if db.query(User).filter(User.username == data.username).first():
+            raise AppError(400, "Username already registered")
         user.username = data.username
     if data.role_id is not None:
         role = db.query(Role).filter(Role.id == data.role_id).first()
