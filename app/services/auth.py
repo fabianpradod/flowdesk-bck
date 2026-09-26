@@ -11,6 +11,7 @@ from app.core.security import decode_access_token, token_subject
 from app.utils.email import send_password_set_email, send_password_reset_email
 from app.core.security import hash_password, verify_password, create_access_token
 from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
+from app.utils.logger import logger
 
 _reset_attempts: dict[str, list] = {}
 BLOCKED_EMPLOYEE_ROLES = {"superadmin"}
@@ -31,6 +32,11 @@ def validate_password_reuse(user: User, new_password: str):
             status_code=400,
             message="New password cannot match current password"
         )
+
+def _log_email_failure(kind: str, user_id, exc: Exception) -> None:
+    # User id and exception class only: SMTP errors such as SMTPRecipientsRefused
+    # carry the address in their message.
+    logger.warning("Failed to send the %s email to user %s: %s", kind, user_id, exc.__class__.__name__)
 
 def _check_rate_limit(email: str):
     now = datetime.now(timezone.utc)
@@ -85,8 +91,8 @@ def register_company(data: CompanyCreate, db: Session) -> Company:
     )
     try:
         send_password_set_email(data.admin_email, token)
-    except Exception as e:
-        print(f"[EMAIL ERROR] Failed to send to {data.admin_email}: {e}")
+    except Exception as exc:
+        _log_email_failure("invitation", admin.id, exc)
     return company
 
 # ─── login ────────────────────────────────────────────────────────
@@ -164,8 +170,8 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
     )
     try:
         send_password_set_email(data.email, token)
-    except Exception as e:
-        print(f"[EMAIL ERROR] Failed to send to {data.email}: {e}")
+    except Exception as exc:
+        _log_email_failure("invitation", employee.id, exc)
     return employee
 
 def list_employees(current_user: User, db: Session, company_id=None) -> list[User]:
@@ -235,8 +241,8 @@ def resend_invitation(email: str, current_user: User, db: Session):
     )
     try:
         send_password_set_email(email, token)
-    except Exception as e:
-        print(f"[EMAIL ERROR] Failed to send to {email}: {e}")
+    except Exception as exc:
+        _log_email_failure("invitation", user.id, exc)
     return {"message": "Invitation resent successfully"}
 
 def forgot_password(email: str, db: Session):
@@ -249,6 +255,7 @@ def forgot_password(email: str, db: Session):
         )
         try:
             send_password_reset_email(email, token)
-        except Exception as e:
-            print(f"[EMAIL ERROR] Failed to send to {email}: {e}")    # always return the same response
+        except Exception as exc:
+            _log_email_failure("reset", user.id, exc)
+    # Same answer whether or not the email exists.
     return {"message": "If that email exists, a reset link was sent"}
