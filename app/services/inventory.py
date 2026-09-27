@@ -1026,11 +1026,17 @@ def get_product_analytics(
     period: AnalyticsPeriod,
     sort_by: ProductAnalyticsSort,
     limit: int,
+    product_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict:
     analytics_range = _resolve_analytics_range(period, start_date, end_date)
-    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id=None)
+    rows = _fetch_analytics_rows(
+        current_user,
+        db,
+        analytics_range,
+        product_id=product_id,
+    )
     products = _rank_product_rows(rows, sort_by=sort_by, limit=limit)
     return {
         "period": period,

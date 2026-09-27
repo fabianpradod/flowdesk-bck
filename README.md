@@ -119,6 +119,8 @@ válida, es decir también `employee`.
 | `DELETE /api/v1/inventory/suppliers/{id}` | `admin` |
 | `GET /api/v1/commercial/clients`, `/clients/{id}` | Autenticado |
 | `GET /api/v1/commercial/sales/{id}`, `/clients/{id}/purchases` | Autenticado |
+| `GET /api/v1/analytics/*` | `manager` |
+| `POST /api/v1/ai/analysis` | `manager` |
 | `POST /api/v1/commercial/clients`, `/sales` | `manager` |
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
@@ -225,6 +227,26 @@ directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
 El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
 empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
 
+### Reglas tributarias y cálculo de impuestos
+
+#### Configuración tributaria
+La configuración tributaria pertenece al esquema de cada tenant (tabla `configuracion_tributaria`).
+- **Consulta**: Cualquier usuario autenticado puede consultar la tasa actual con `GET /api/v1/commercial/tax-configuration`.
+- **Actualización**: Solo los roles `admin` y `superadmin` pueden modificarla mediante `PUT /api/v1/commercial/tax-configuration`.
+- **Tasa permitida**: La `tasa_impuesto` debe ser un valor decimal entre `0.00` y `100.00` con hasta 2 decimales.
+- **Compatibilidad**: Tenants sin configuración explícita utilizan una tasa predeterminada de `0.00` (sin recargo fiscal).
+
+#### Reglas de cálculo en ventas
+Al registrar una venta mediante `POST /api/v1/commercial/sales`:
+1. **Subtotal**: Suma de las líneas de detalle (`cantidad * precio_unitario`), redondeado cada ítem con `ROUND_HALF_UP` a 2 decimales.
+2. **Descuento**: Monto descontado del subtotal (`0 <= descuento <= subtotal`).
+3. **Impuesto aplicable**:
+   - Para operaciones gravadas (`es_exenta=false`), se calcula: `impuesto = round(subtotal * (tasa_impuesto / 100))`.
+   - Para operaciones exentas (`es_exenta=true`), el impuesto es forzado a `0.00` sin alterar el registro histórico de la tasa aplicable.
+4. **Total final**: `total = subtotal - descuento + impuesto`.
+5. **Redondeo monetario**: Se utiliza redondeo aritmético simétrico (`ROUND_HALF_UP`) con precisión a centavos (`0.01`).
+6. **Almacenamiento del desglose**: La venta almacena `subtotal`, `descuento`, `impuesto`, `tasa_impuesto`, `es_exenta` y `total` para auditoría e histórico inmutable.
+
 ### Tareas
 
 Los estados válidos son `pendiente`, `en_progreso`, `completada` y `cancelada`;
@@ -248,3 +270,41 @@ pytest -q
 
 Las pruebas no requieren un PostgreSQL real: reemplazan la inicialización y las
 dependencias de persistencia cuando corresponde.
+
+### Análisis inteligente — `/api/v1/ai`
+
+El endpoint autenticado `POST /analysis` utiliza la API compatible con OpenAI de
+Z.AI. Crear una clave en [la consola de Z.AI](https://z.ai/manage-apikey/apikey-list)
+y configurar:
+
+```env
+ZAI_API_KEY=
+ZAI_MODEL=glm-5.3-flash
+ZAI_BASE_URL=https://api.z.ai/api/paas/v4
+ZAI_TIMEOUT_SECONDS=30
+```
+
+`glm-5.3-flash` es una opción gratuita publicada por Z.AI; los límites y precios
+pueden cambiar, por lo que deben comprobarse en su consola. Si no se configura
+`ZAI_API_KEY`, el endpoint responde `503` sin impedir el arranque del resto de la
+API. Nunca se registra ni se devuelve la clave.
+
+El body acepta `scope=inventory|sales|catalog|business`, `period`, `start_date`,
+`end_date`, `product_id`, `supplier_id`, `client_id`, `customer_type` y una
+`question` opcional. Solo se envían métricas agregadas del tenant autenticado; no se
+envían correos, nombres de usuarios, credenciales ni el nombre del esquema. La
+respuesta siempre se valida con la estructura `summary`, `insights` y
+`recommendations`. Z.AI es un tercero: antes de usar datos reales se deben revisar
+sus términos, retención y tratamiento de datos vigentes.
+
+Respuestas operativas: `400/422` para filtros inválidos, `401/403` para problemas de
+acceso, `502` para una respuesta inválida del proveedor y `503` para clave ausente,
+credenciales inválidas, rate limit o indisponibilidad temporal.
+
+La integración externa no se ejecuta durante la suite normal. Para comprobar una
+llamada real con la clave del `.env`, ejecutar explícitamente:
+
+```powershell
+$env:RUN_ZAI_INTEGRATION_TEST="1"
+python -m pytest tests/test_zai.py -k live -v
+```
