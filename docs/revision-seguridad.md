@@ -103,7 +103,10 @@ reactivar una cuenta que un admin había desactivado.
 
 **Corrección.** Los usuarios pendientes se crean con contraseña vacía. Si el
 usuario ya tiene contraseña, la invitación se considera usada y responde 400
-`Invitation already used`.
+`Invitation already used`. La contraseña se reclama con un `UPDATE` condicional
+(`WHERE password = ''`), así que dos solicitudes simultáneas con el mismo enlace no
+pueden pasar las dos: con 10 solicitudes a la vez contra PostgreSQL, antes
+respondían 200 todas, ahora responde 200 solo una.
 
 **Efecto a tener en cuenta.** Reenviar una invitación a una cuenta desactivada
 envía un enlace que ahora se rechaza. Para reactivar una cuenta se usa
