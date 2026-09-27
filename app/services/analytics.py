@@ -22,6 +22,8 @@ def get_sales_metrics(
     period: AnalyticsPeriod,
     customer_type: SalesCustomerType = "all",
     client_id: UUID | None = None,
+    product_id: UUID | None = None,
+    supplier_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict[str, Any]:
@@ -32,11 +34,15 @@ def get_sales_metrics(
         analytics_range=analytics_range,
         customer_type=customer_type,
         client_id=client_id,
+        product_id=product_id,
+        supplier_id=supplier_id,
     )
     return {
         "period": period,
         "customer_type": customer_type,
         "client_id": client_id,
+        "product_id": product_id,
+        "supplier_id": supplier_id,
         "start_date": analytics_range["start"].date(),
         "end_date": analytics_range["end"].date(),
         **summarize_sales(rows),
@@ -50,6 +56,8 @@ def get_sales_trend(
     window: AnalyticsWindow,
     customer_type: SalesCustomerType = "all",
     client_id: UUID | None = None,
+    product_id: UUID | None = None,
+    supplier_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict[str, Any]:
@@ -60,12 +68,16 @@ def get_sales_trend(
         analytics_range=analytics_range,
         customer_type=customer_type,
         client_id=client_id,
+        product_id=product_id,
+        supplier_id=supplier_id,
     )
     return {
         "period": period,
         "window": window,
         "customer_type": customer_type,
         "client_id": client_id,
+        "product_id": product_id,
+        "supplier_id": supplier_id,
         "start_date": analytics_range["start"].date(),
         "end_date": analytics_range["end"].date(),
         "points": aggregate_sales_trend(rows, window=window),
@@ -333,9 +345,12 @@ def _fetch_final_sales(
     analytics_range: dict[str, datetime],
     customer_type: SalesCustomerType,
     client_id: UUID | None,
+    product_id: UUID | None = None,
+    supplier_id: UUID | None = None,
 ) -> list[dict[str, Any]]:
     _validate_sales_customer_filters(customer_type, client_id)
-    sales = _analytics_tables(current_user)["venta"]
+    tables = _analytics_tables(current_user)
+    sales = tables["venta"]
     query = select(
         sales.c.fecha,
         sales.c.subtotal,
@@ -354,8 +369,34 @@ def _fetch_final_sales(
         query = query.where(sales.c.cliente_id.is_not(None))
     elif customer_type == "final_consumer":
         query = query.where(sales.c.cliente_id.is_(None))
+    if product_id is not None or supplier_id is not None:
+        details, products = tables["detalle_venta"], tables["producto"]
+        # One row per sale prevents multiple matching lines from multiplying
+        # invoice counts or invoice-level discount/tax amounts.
+        selected = select(
+            details.c.venta_id,
+            func.sum(details.c.subtotal).label("selected_subtotal"),
+        ).select_from(details.join(products, products.c.id == details.c.producto_id))
+        if product_id is not None:
+            selected = selected.where(products.c.id == product_id)
+        if supplier_id is not None:
+            selected = selected.where(products.c.proveedor_id == supplier_id)
+        selected = selected.group_by(details.c.venta_id).subquery()
+        query = query.join(selected, selected.c.venta_id == sales.c.id).add_columns(selected.c.selected_subtotal)
     query = query.order_by(sales.c.fecha.asc())
-    return [dict(row) for row in db.execute(query).mappings()]
+    rows = [dict(row) for row in db.execute(query).mappings()]
+    if product_id is not None or supplier_id is not None:
+        for row in rows:
+            subtotal = _decimal(row.pop("selected_subtotal"))
+            invoice_subtotal = _decimal(row["subtotal"])
+            # A zero-value invoice has no monetary basis for allocating global
+            # charges; selected zero-value lines therefore receive zero charges.
+            fraction = subtotal / invoice_subtotal if invoice_subtotal > 0 else Decimal("0")
+            row["subtotal"] = subtotal
+            row["descuento"] = _money(_decimal(row["descuento"]) * fraction)
+            row["impuesto"] = _money(_decimal(row["impuesto"]) * fraction)
+            row["total"] = subtotal - row["descuento"] + row["impuesto"]
+    return rows
 
 def _validate_sales_customer_filters(
     customer_type: SalesCustomerType, client_id: UUID | None

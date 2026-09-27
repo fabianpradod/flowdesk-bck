@@ -310,3 +310,29 @@ llamada real con la clave del `.env`, ejecutar explícitamente:
 $env:RUN_ZAI_INTEGRATION_TEST="1"
 python -m pytest tests/test_zai.py -k live -v
 ```
+
+
+### Permisos y filtros del análisis de ventas
+
+`/api/v1/analytics/*` y `/api/v1/ai/analysis` requieren el rol exacto `manager` o
+`admin`, igual que el chat, y consultan únicamente la empresa activa del usuario.
+Las métricas y tendencias de ventas aceptan `product_id` y `supplier_id`; cuando
+se proporcionan ambos, se aplica su intersección. El análisis usa los mismos
+filtros en métricas, tendencias y ranking.
+
+Con estos filtros se suman únicamente los subtotales de las líneas seleccionadas
+y se cuenta cada venta coincidente una sola vez. Los descuentos e impuestos de la
+venta se prorratean según `subtotal seleccionado / subtotal de la venta`, con
+redondeo a centavos por venta (Decimal, mitad al par). Las ventas netas filtradas
+son subtotal seleccionado menos descuento asignado más impuesto asignado; el
+ticket promedio usa ese importe y el número de ventas coincidentes. Sin filtros,
+se conservan los importes completos registrados en la venta. Una venta con
+subtotal cero no tiene base monetaria de reparto y recibe cargos asignados cero.
+El ranking muestra subtotales de líneas antes del prorrateo, y el contexto enviado
+al proveedor explica esta diferencia. Consultas separadas pueden diferir por un
+centavo al recombinar asignaciones redondeadas.
+
+Los errores de validación HTTP mantienen `message`, `code` y `errors`; cada error
+incluye `type`, `loc` y `msg`. No se devuelven objetos de excepción ni la entrada
+original. Los validadores de preguntas vacías y filtros incompatibles siguen
+activos y responden 422.

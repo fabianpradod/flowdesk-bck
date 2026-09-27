@@ -12,6 +12,8 @@ class SalesMetricsResponse(BaseModel):
     period: AnalyticsPeriod
     customer_type: SalesCustomerType
     client_id: UUID | None
+    product_id: UUID | None = None
+    supplier_id: UUID | None = None
     start_date: date
     end_date: date
     sales_count: int
@@ -38,6 +40,8 @@ class SalesTrendResponse(BaseModel):
     window: AnalyticsWindow
     customer_type: SalesCustomerType
     client_id: UUID | None
+    product_id: UUID | None = None
+    supplier_id: UUID | None = None
     start_date: date
     end_date: date
     points: list[SalesTrendPoint]

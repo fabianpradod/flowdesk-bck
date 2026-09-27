@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -71,7 +72,12 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
         content={
             "message": "Invalid request format",
             "code": "validation_error",
-            "errors": exc.errors(),
+            # Pydantic validator context may contain ValueError instances.
+            # Expose the field/type/message contract, not exceptions or raw input.
+            "errors": jsonable_encoder([
+                {key: error[key] for key in ("type", "loc", "msg") if key in error}
+                for error in exc.errors()
+            ]),
         },
     )
 

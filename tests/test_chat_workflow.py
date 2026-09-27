@@ -508,3 +508,55 @@ def test_followup_context_preserves_prior_source_period(database, business):
     assert str(first.sources[0].end_date) in previous
     assert "query tools again for fresh figures" in previous
     assert "INTERNAL REASONING" not in previous
+
+
+@pytest.mark.parametrize("selection", ["product", "supplier", "both", "other_tenant", "other_customer"])
+def test_filtered_analytics_and_analysis_share_real_tenant_totals(api, database, selection):
+    from app.services.intelligence import get_analysis_provider
+    client, user, _ = api
+    db = database.db
+    tables = get_tenant_tables(database.actor.schema_name)
+    product, other_product, supplier, other_supplier, sale = [uuid4() for _ in range(5)]
+    stamp = datetime(2026, 8, 2)
+    for identity in [supplier, other_supplier]:
+        db.execute(insert(tables["proveedor"]).values(id=identity, nombre=str(identity), is_active=True,
+                   created_at=stamp, updated_at=stamp))
+    for identity, supplier_id in [(product, supplier), (other_product, other_supplier)]:
+        db.execute(insert(tables["producto"]).values(id=identity, proveedor_id=supplier_id, sku=str(identity),
+                   nombre="Product", precio_venta=10, stock_actual=1, stock_minimo=1,
+                   created_at=stamp, updated_at=stamp))
+    db.execute(insert(tables["venta"]).values(id=sale, usuario_id=user.id, fecha=stamp, subtotal=100,
+               descuento=20, impuesto=10, total=90, estado="completada", created_at=stamp, updated_at=stamp))
+    for identity, amount in [(product, 4), (product, 6), (other_product, 90)]:
+        db.execute(insert(tables["detalle_venta"]).values(id=uuid4(), venta_id=sale, producto_id=identity,
+                   cantidad=1, precio_unitario=amount, subtotal=amount))
+    db.commit()
+    filters = {"period": "custom", "start_date": "2026-08-01", "end_date": "2026-08-31"}
+    if selection != "supplier":
+        filters["product_id"] = str(product)
+    if selection in {"supplier", "both"}:
+        filters["supplier_id"] = str(supplier)
+    if selection == "other_tenant":
+        user.company_id = database.company_ids[1]
+        user.company.schema_name = database.other_tenant.schema_name
+    if selection == "other_customer":
+        filters["client_id"] = str(uuid4())
+    expected = "0.00" if selection.startswith("other_") else "9.00"
+    metrics = client.get("/api/v1/analytics/sales/metrics", params=filters)
+    assert metrics.status_code == 200, metrics.text
+    assert metrics.json()["net_sales"] == expected
+    trend = client.get("/api/v1/analytics/sales/trend", params=filters)
+    assert trend.status_code == 200, trend.text
+    assert sum(Decimal(p["net_sales"]) for p in trend.json()["points"]) == Decimal(expected)
+    class Provider:
+        name = "test"
+        context = None
+        def generate(self, *, request, context):
+            self.context = context
+            return {"summary": "Test result", "insights": [], "recommendations": []}
+    provider = Provider()
+    app.dependency_overrides[get_analysis_provider] = lambda: provider
+    response = client.post("/api/v1/ai/analysis", json={"scope": "sales", **filters})
+    assert response.status_code == 200, response.text
+    assert Decimal(str(provider.context["sales_metrics"]["net_sales"])) == Decimal(expected)
+    assert any("allocated" in note for note in provider.context["data_limitations"])

@@ -438,3 +438,106 @@ def test_custom_period_requires_both_dates(admin_client):
     )
 
     assert response.status_code == 400
+
+@pytest.mark.parametrize("path,service", [
+    ("sales/metrics", "get_sales_metrics"),
+    ("sales/trend", "get_sales_trend"),
+    ("inventory/risk-distribution", "get_inventory_risk_distribution"),
+    ("sales/top-products", "get_top_selling_products"),
+    ("catalog/product-creation-trend", "get_product_creation_trend"),
+])
+@pytest.mark.parametrize("role,expected", [("employee", 403), ("superadmin", 403), ("manager", 200), ("admin", 200)])
+def test_analytics_role_policy_matches_chat(admin_client, monkeypatch, path, service, role, expected):
+    from types import SimpleNamespace
+    from app.api.dependencies.auth import get_current_user
+    user = app.dependency_overrides[get_current_user]()
+    user = SimpleNamespace(id=user.id, company_id=user.company_id, company=user.company,
+                           is_active=True, role=SimpleNamespace(name=role))
+    app.dependency_overrides[get_current_user] = lambda: user
+    calls = []
+    def result(*args, **kwargs):
+        calls.append(True)
+        return dict(period="30d", window="day", customer_type="all", client_id=None,
+                    supplier_id=None, product_id=None, active_only=None,
+                    start_date="2026-08-01", end_date="2026-08-31", sales_count=0,
+                    gross_sales=0, discounts=0, taxes=0, net_sales=0, average_ticket=0,
+                    registered_customer_sales=0, final_consumer_sales=0, points=[],
+                    products=[], total_products=0, distribution=[], total_created=0)
+    monkeypatch.setattr(analytics_service, service, result)
+    response = admin_client.get(f"/api/v1/analytics/{path}")
+    assert response.status_code == expected
+    assert bool(calls) == (expected == 200)
+
+
+@pytest.mark.parametrize("filter_by", ["product", "supplier", "both", "mismatch", "missing"])
+@pytest.mark.parametrize("discount,tax,expected_net", [(0, 0, "10.00"), (20, 10, "9.00")])
+def test_analysis_sales_filters_sum_only_matching_lines(analytics_db, filter_by, discount, tax, expected_net):
+    from app.schemas.intelligence import IntelligentAnalysisRequest
+    from app.services.analysis_context import build_business_context
+    db, sales, products, _ = analytics_db
+    details = products.metadata.tables["detalle_venta"]
+    product, other_product, supplier, other_supplier, sale = [str(uuid4()) for _ in range(5)]
+    db.execute(insert(products), [
+        dict(id=product, proveedor_id=supplier, sku="A", nombre="A", stock_actual=1, stock_minimo=1, is_active=True),
+        dict(id=other_product, proveedor_id=other_supplier, sku="B", nombre="B", stock_actual=1, stock_minimo=1, is_active=True),
+    ])
+    db.execute(insert(sales).values(id=sale, fecha=datetime(2026, 8, 2), subtotal=100,
+               descuento=discount, impuesto=tax, total=100-discount+tax, estado="completada", cliente_id=None))
+    db.execute(insert(details), [
+        dict(id=str(uuid4()), venta_id=sale, producto_id=product, cantidad=1, subtotal=4),
+        dict(id=str(uuid4()), venta_id=sale, producto_id=product, cantidad=1, subtotal=6),
+        dict(id=str(uuid4()), venta_id=sale, producto_id=other_product, cantidad=1, subtotal=90),
+    ])
+    db.commit()
+    filters = {
+        "product": {"product_id": product}, "supplier": {"supplier_id": supplier},
+        "both": {"product_id": product, "supplier_id": supplier},
+        "mismatch": {"product_id": product, "supplier_id": other_supplier},
+        "missing": {"product_id": str(uuid4())},
+    }[filter_by]
+    # This fixture has String IDs; model_construct keeps that SQL type while traversing
+    # the real context -> service -> SQL -> aggregation path. HTTP UUIDs are tested separately.
+    request = IntelligentAnalysisRequest.model_construct(scope="sales", period="custom",
+        start_date=datetime(2026, 8, 1).date(), end_date=datetime(2026, 8, 31).date(), **filters)
+    context = build_business_context(request, object(), db)
+    metrics = context["sales_metrics"]
+    if filter_by in {"mismatch", "missing"}:
+        assert metrics["sales_count"] == 0
+        assert metrics["net_sales"] == 0
+        assert context["sales_trend"]["points"] == []
+        assert context["top_selling_products"] == []
+    else:
+        assert metrics["sales_count"] == 1  # Two matching lines, one sale.
+        assert Decimal(str(metrics["gross_sales"])) == Decimal("10.00")
+        assert Decimal(str(metrics["net_sales"])) == Decimal(expected_net)
+        assert Decimal(str(metrics["discounts"])) == (Decimal("2.00") if discount else Decimal("0"))
+        assert Decimal(str(metrics["taxes"])) == (Decimal("1.00") if tax else Decimal("0"))
+        assert context["sales_trend"]["points"][0]["net_sales"] == metrics["net_sales"]
+        assert context["top_selling_products"][0]["revenue"] == 10
+
+
+@pytest.mark.parametrize("subtotal,selected,discount,tax,expected_net,expected_discount", [
+    (3, 1, 1, 0, "0.67", "0.33"),
+    (0, 0, 0, 1, "0.00", "0.00"),
+])
+def test_filtered_sales_round_allocations_and_handle_zero_subtotal(
+    analytics_db, subtotal, selected, discount, tax, expected_net, expected_discount,
+):
+    db, sales, products, _ = analytics_db
+    details = products.metadata.tables["detalle_venta"]
+    product, other, sale = [str(uuid4()) for _ in range(3)]
+    for identity in [product, other]:
+        db.execute(insert(products).values(id=identity, stock_actual=1, stock_minimo=1, is_active=True))
+    db.execute(insert(sales).values(id=sale, fecha=datetime(2026, 8, 2), subtotal=subtotal,
+               descuento=discount, impuesto=tax, total=subtotal-discount+tax, estado="completada"))
+    for identity, amount in [(product, selected), (other, subtotal-selected)]:
+        db.execute(insert(details).values(id=str(uuid4()), venta_id=sale, producto_id=identity,
+                   cantidad=1, subtotal=amount))
+    db.commit()
+    filters = dict(period="custom", start_date=datetime(2026, 8, 1).date(), end_date=datetime(2026, 8, 31).date())
+    result = analytics_service.get_sales_metrics(object(), db, product_id=product, **filters)
+    assert result["net_sales"] == Decimal(expected_net)
+    assert result["discounts"] == Decimal(expected_discount)
+    assert result["sales_count"] == 1
+    unfiltered = analytics_service.get_sales_metrics(object(), db, **filters)
+    assert unfiltered["net_sales"] == Decimal(subtotal-discount+tax)
