@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID, uuid4
-
-from sqlalchemy import func, insert, or_, select, update
+from sqlalchemy import func, insert, or_, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -387,16 +386,43 @@ def update_tax_configuration(data: TaxConfigurationUpdate, current_user, db: Ses
     configuration = tables["configuracion_tributaria"]
     rate = _decimal(data.tasa_impuesto)
     now = _utcnow()
-    current = db.execute(select(configuration.c.id).limit(1)).first()
+
     try:
+        schema_name = configuration.schema
+        lock_key = f"flowdesk-tax-config:{schema_name}"
+        db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"
+            ).bindparams(lock_key=lock_key)
+        )
+        current = db.execute(
+            select(configuration.c.id).order_by(configuration.c.updated_at.desc()).limit(1)
+        ).first()
+
         if current is None:
-            db.execute(insert(configuration).values(id=uuid4(), tasa_impuesto=rate, created_at=now, updated_at=now))
+            db.execute(
+                insert(configuration).values(
+                    id=uuid4(),
+                    tasa_impuesto=rate,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
         else:
-            db.execute(update(configuration).where(configuration.c.id == current[0]).values(tasa_impuesto=rate, updated_at=now))
+            db.execute(
+                update(configuration)
+                .where(configuration.c.id == current[0])
+                .values(tasa_impuesto=rate, updated_at=now)
+            )
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
-        raise AppError(status_code=500, message="Database error while updating tax configuration") from exc
+        
+        raise AppError(
+            status_code=500,
+            message="Database error while updating tax configuration",
+        ) from exc
+    
     return {"tasa_impuesto": rate}
 
 def list_client_purchases(
@@ -520,7 +546,12 @@ def _round_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 def _get_tax_rate(db: Session, configuration) -> Decimal:
-    row = db.execute(select(configuration.c.tasa_impuesto).limit(1)).mappings().first()
+    row = db.execute(
+        select(configuration.c.tasa_impuesto)
+        .order_by(configuration.c.updated_at.desc(), configuration.c.created_at.desc())
+        .limit(1)
+    ).mappings().first()
+    
     if row is None:
         return Decimal("0")
     return _decimal(row["tasa_impuesto"])
