@@ -62,6 +62,13 @@ class FakeQuery:
         rows = self.all()
         return rows[0] if rows else None
 
+    def update(self, values, **_kwargs):
+        rows = self.all()
+        for row in rows:
+            for column, value in values.items():
+                setattr(row, getattr(column, "key", column), value)
+        return len(rows)
+
 class FakeDB:
     def __init__(self, data=None):
         self.data = data or {}

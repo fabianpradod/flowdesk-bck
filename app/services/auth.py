@@ -200,8 +200,21 @@ def set_password(token: str, new_password: str, db: Session) -> dict:
     if user.password:
         raise AppError(status_code=400, message="Invitation already used")
 
-    user.password = hash_password(new_password)
-    user.is_active = True
+    # The check above only covers sequential reuse. Two requests with the same
+    # link can both read the empty password, so the password is claimed with a
+    # conditional UPDATE: Postgres re-checks the WHERE after the row lock, and
+    # only the first request matches.
+    claimed = (
+        db.query(User)
+        .filter(User.id == user.id, User.password == "")
+        .update(
+            {User.password: hash_password(new_password), User.is_active: True},
+            synchronize_session=False,
+        )
+    )
+    if not claimed:
+        db.rollback()
+        raise AppError(status_code=400, message="Invitation already used")
     db.commit()
 
     return {"message": "Password set successfully"}
