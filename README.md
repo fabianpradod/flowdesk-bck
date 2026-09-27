@@ -125,6 +125,8 @@ válida, es decir también `employee`.
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
 | `DELETE /api/v1/commercial/clients/{id}` | `admin` |
+| `GET /api/v1/commercial/tax-configuration` | Autenticado |
+| `PUT /api/v1/commercial/tax-configuration` | `admin` |
 | `GET/POST/PUT/PATCH/DELETE /api/v1/tasks/*` | Autenticado, y solo sobre tareas propias |
 
 Dos reglas del dependency que conviene tener presentes:
