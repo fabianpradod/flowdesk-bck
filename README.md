@@ -119,6 +119,8 @@ válida, es decir también `employee`.
 | `DELETE /api/v1/inventory/suppliers/{id}` | `admin` |
 | `GET /api/v1/commercial/clients`, `/clients/{id}` | Autenticado |
 | `GET /api/v1/commercial/sales/{id}`, `/clients/{id}/purchases` | Autenticado |
+| `GET /api/v1/analytics/*` | `manager` |
+| `POST /api/v1/ai/analysis` | `manager` |
 | `POST /api/v1/commercial/clients`, `/sales` | `manager` |
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |

@@ -22,6 +22,8 @@ def get_sales_metrics(
     period: AnalyticsPeriod,
     customer_type: SalesCustomerType = "all",
     client_id: UUID | None = None,
+    product_id: UUID | None = None,
+    supplier_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict[str, Any]:
@@ -32,11 +34,15 @@ def get_sales_metrics(
         analytics_range=analytics_range,
         customer_type=customer_type,
         client_id=client_id,
+        product_id=product_id,
+        supplier_id=supplier_id,
     )
     return {
         "period": period,
         "customer_type": customer_type,
         "client_id": client_id,
+        "product_id": product_id,
+        "supplier_id": supplier_id,
         "start_date": analytics_range["start"].date(),
         "end_date": analytics_range["end"].date(),
         **summarize_sales(rows),
@@ -50,6 +56,8 @@ def get_sales_trend(
     window: AnalyticsWindow,
     customer_type: SalesCustomerType = "all",
     client_id: UUID | None = None,
+    product_id: UUID | None = None,
+    supplier_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict[str, Any]:
@@ -60,12 +68,16 @@ def get_sales_trend(
         analytics_range=analytics_range,
         customer_type=customer_type,
         client_id=client_id,
+        product_id=product_id,
+        supplier_id=supplier_id,
     )
     return {
         "period": period,
         "window": window,
         "customer_type": customer_type,
         "client_id": client_id,
+        "product_id": product_id,
+        "supplier_id": supplier_id,
         "start_date": analytics_range["start"].date(),
         "end_date": analytics_range["end"].date(),
         "points": aggregate_sales_trend(rows, window=window),
@@ -333,20 +345,74 @@ def _fetch_final_sales(
     analytics_range: dict[str, datetime],
     customer_type: SalesCustomerType,
     client_id: UUID | None,
+    product_id: UUID | None = None,
+    supplier_id: UUID | None = None,
 ) -> list[dict[str, Any]]:
     _validate_sales_customer_filters(customer_type, client_id)
-    sales = _analytics_tables(current_user)["venta"]
-    query = select(
-        sales.c.fecha,
-        sales.c.subtotal,
-        sales.c.descuento,
-        sales.c.impuesto,
-        sales.c.total,
-        sales.c.cliente_id,
-    ).where(
+    tables = _analytics_tables(current_user)
+    sales = tables["venta"]
+    details = tables["detalle_venta"]
+    products = tables["producto"]
+
+    base_filters = [
         sales.c.fecha >= analytics_range["start"],
         sales.c.fecha <= analytics_range["end"],
         func.lower(sales.c.estado).in_(FINAL_SALE_STATES),
+    ]
+
+    if product_id is None:
+        query = select(
+            sales.c.fecha,
+            sales.c.subtotal,
+            sales.c.descuento,
+            sales.c.impuesto,
+            sales.c.total,
+            sales.c.cliente_id,
+        ).where(*base_filters)
+
+        if client_id is not None:
+            query = query.where(sales.c.cliente_id == client_id)
+        elif customer_type == "registered":
+            query = query.where(sales.c.cliente_id.is_not(None))
+        elif customer_type == "final_consumer":
+            query = query.where(sales.c.cliente_id.is_(None))
+        if supplier_id is not None:
+            query = query.select_from(
+                sales.join(details, details.c.venta_id == sales.c.id).join(
+                    products, products.c.id == details.c.producto_id
+                )
+            ).where(products.c.proveedor_id == supplier_id).distinct()
+
+        return [
+            dict(row)
+            for row in db.execute(query.order_by(sales.c.fecha.asc())).mappings()
+        ]
+
+    line_subtotal = func.sum(details.c.subtotal)
+    query = (
+        select(
+            sales.c.id.label("sale_id"),
+            sales.c.fecha,
+            sales.c.subtotal.label("sale_subtotal"),
+            sales.c.descuento.label("sale_discount"),
+            sales.c.impuesto.label("sale_tax"),
+            sales.c.cliente_id,
+            line_subtotal.label("filtered_subtotal"),
+        )
+        .select_from(
+            sales.join(details, details.c.venta_id == sales.c.id)
+            .join(products, products.c.id == details.c.producto_id)
+        )
+        .where(*base_filters)
+        .where(details.c.producto_id == product_id)
+        .group_by(
+            sales.c.id,
+            sales.c.fecha,
+            sales.c.subtotal,
+            sales.c.descuento,
+            sales.c.impuesto,
+            sales.c.cliente_id,
+        )
     )
     if client_id is not None:
         query = query.where(sales.c.cliente_id == client_id)
@@ -354,8 +420,33 @@ def _fetch_final_sales(
         query = query.where(sales.c.cliente_id.is_not(None))
     elif customer_type == "final_consumer":
         query = query.where(sales.c.cliente_id.is_(None))
-    query = query.order_by(sales.c.fecha.asc())
-    return [dict(row) for row in db.execute(query).mappings()]
+    if supplier_id is not None:
+        query = query.where(products.c.proveedor_id == supplier_id)
+
+    rows = []
+    for row in db.execute(query.order_by(sales.c.fecha.asc())).mappings():
+        row = dict(row)
+        sale_subtotal = _decimal(row["sale_subtotal"])
+        filtered_subtotal = _decimal(row["filtered_subtotal"])
+        ratio = (
+            filtered_subtotal / sale_subtotal
+            if sale_subtotal
+            else Decimal("0")
+        )
+        discount = _money(_decimal(row["sale_discount"]) * ratio)
+        tax = _money(_decimal(row["sale_tax"]) * ratio)
+        filtered_total = _money(filtered_subtotal - discount + tax)
+        rows.append(
+            {
+                "fecha": row["fecha"],
+                "subtotal": filtered_subtotal,
+                "descuento": discount,
+                "impuesto": tax,
+                "total": filtered_total,
+                "cliente_id": row["cliente_id"],
+            }
+        )
+    return rows
 
 def _validate_sales_customer_filters(
     customer_type: SalesCustomerType, client_id: UUID | None

@@ -52,6 +52,7 @@ def build_business_context(
             period=request.period,
             sort_by="stock_risk",
             limit=MAX_RISK_PRODUCTS,
+            product_id=request.product_id,
             start_date=request.start_date,
             end_date=request.end_date,
         )
@@ -88,6 +89,8 @@ def build_business_context(
             "period": request.period,
             "customer_type": request.customer_type,
             "client_id": request.client_id,
+            "product_id": request.product_id,
+            "supplier_id": request.supplier_id,
             "start_date": request.start_date,
             "end_date": request.end_date,
         }
@@ -98,8 +101,6 @@ def build_business_context(
         top_products = analytics_service.get_top_selling_products(
             current_user,
             db,
-            supplier_id=request.supplier_id,
-            product_id=request.product_id,
             limit=MAX_RISK_PRODUCTS,
             **sales_filters,
         )
