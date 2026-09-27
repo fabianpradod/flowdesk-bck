@@ -253,3 +253,24 @@ def test_openapi_includes_intelligent_analysis_endpoint():
     assert operation["summary"] == "Generar análisis inteligente"
     assert "200" in operation["responses"]
     assert "503" in operation["responses"]
+
+def test_intelligence_endpoint_requires_manager_role(client, employee_client):
+    response = employee_client.post("/api/v1/ai/analysis", json={})
+    assert response.status_code == 403
+
+def test_intelligence_request_rejects_blank_question():
+    with pytest.raises(ValidationError):
+        IntelligentAnalysisRequest(question="   ")
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"scope": "inventory", "client_id": str(uuid4())},
+        {"scope": "catalog", "customer_type": "registered"},
+        {"scope": "sales", "period": "custom", "start_date": "2026-09-10"},
+        {"scope": "sales", "period": "custom", "start_date": "2026-09-10", "end_date": "2026-09-01"},
+    ],
+)
+def test_intelligence_request_rejects_incompatible_filters(payload):
+    with pytest.raises(ValidationError):
+        IntelligentAnalysisRequest.model_validate(payload)

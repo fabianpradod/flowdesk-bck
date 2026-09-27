@@ -19,6 +19,9 @@ class FakeResult:
     def first(self):
         return self.rows[0] if self.rows else None
 
+    def __iter__(self):
+        return iter(self.rows)
+
 class FakeDB:
     def __init__(self, rows=None):
         self.rows = list(rows or [])
@@ -213,3 +216,17 @@ def test_complete_sale_with_tax_and_discount_flow(monkeypatch):
     assert sale_params["impuesto"] == Decimal("7.32")
     assert sale_params["total"] == Decimal("63.32")
     assert sale_params["es_exenta"] is False
+
+def test_tax_configuration_update_serializes_tenant_configuration(monkeypatch):
+    metadata = build_tenant_metadata(SCHEMA_NAME)
+    tables = {table.name: table for table in metadata.tables.values() if table.schema == SCHEMA_NAME}
+    monkeypatch.setattr(commercial_service, "_tenant_tables", lambda _user: tables)
+    db = FakeDB([[]])
+
+    commercial_service.update_tax_configuration(
+        TaxConfigurationUpdate(tasa_impuesto=Decimal("12.00")),
+        SimpleNamespace(),
+        db,
+    )
+
+    assert "pg_advisory_xact_lock" in str(db.statements[0])

@@ -438,3 +438,48 @@ def test_custom_period_requires_both_dates(admin_client):
     )
 
     assert response.status_code == 400
+
+def test_product_scoped_sales_metrics_use_only_selected_product(analytics_db):
+    db, sales, products, _movements = analytics_db
+    details = products.metadata.tables["detalle_venta"]
+    product_a, product_b, sale_id = str(uuid4()), str(uuid4()), str(uuid4())
+
+    db.execute(
+        insert(products),
+        [
+            {"id": product_a, "sku": "A", "nombre": "Producto A", "stock_actual": 1, "stock_minimo": 1, "is_active": True},
+            {"id": product_b, "sku": "B", "nombre": "Producto B", "stock_actual": 1, "stock_minimo": 1, "is_active": True},
+        ],
+    )
+    db.execute(
+        insert(sales).values(
+            id=sale_id,
+            fecha=datetime(2026, 8, 10),
+            subtotal=Decimal("100.00"),
+            descuento=Decimal("0.00"),
+            impuesto=Decimal("0.00"),
+            total=Decimal("100.00"),
+            estado="completada",
+        )
+    )
+    db.execute(
+        insert(details),
+        [
+            {"id": str(uuid4()), "venta_id": sale_id, "producto_id": product_a, "cantidad": 1, "subtotal": Decimal("10.00")},
+            {"id": str(uuid4()), "venta_id": sale_id, "producto_id": product_b, "cantidad": 9, "subtotal": Decimal("90.00")},
+        ],
+    )
+    db.commit()
+
+    result = analytics_service.get_sales_metrics(
+        object(),
+        db,
+        period="custom",
+        product_id=product_a,
+        start_date=datetime(2026, 8, 1).date(),
+        end_date=datetime(2026, 8, 31).date(),
+    )
+
+    assert result["sales_count"] == 1
+    assert result["gross_sales"] == Decimal("10.00")
+    assert result["net_sales"] == Decimal("10.00")
