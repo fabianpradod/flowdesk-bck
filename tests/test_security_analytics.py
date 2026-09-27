@@ -1,7 +1,8 @@
 """Metrics and analytics respect authentication, company and permissions.
 
-Scope: the inventory analytics on main (/inventory/analytics/*, /metrics,
-/history) and the reports that reuse their date range. Authentication and the
+Scope: the inventory analytics (/inventory/analytics/*, /metrics, /history), the
+sales and catalog analytics (/analytics/*) and the reports, which all share one
+date range resolver. Authentication and the
 manager floor are covered route by route in test_security_authentication and
 test_security_roles; this file checks what is particular to aggregates: that an
 aggregate built for one company can never fold in another company's rows, and
@@ -38,6 +39,11 @@ RANGED = (
     "/api/v1/inventory/metrics",
     "/api/v1/reports/movimientos",
     "/api/v1/reports/alertas",
+    "/api/v1/analytics/sales/metrics",
+    "/api/v1/analytics/sales/trend",
+    "/api/v1/analytics/sales/top-products",
+    "/api/v1/analytics/inventory/risk-distribution",
+    "/api/v1/analytics/catalog/product-creation-trend",
 )
 
 

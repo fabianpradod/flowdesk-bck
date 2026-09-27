@@ -86,6 +86,15 @@ ROUTE_POLICY = {
     ("GET", "/api/v1/commercial/clients/{client_id}/purchases"): AUTHENTICATED,
     ("POST", "/api/v1/commercial/sales"): MANAGER,
     ("GET", "/api/v1/commercial/sales/{sale_id}"): AUTHENTICATED,
+    ("GET", "/api/v1/commercial/tax-configuration"): AUTHENTICATED,
+    ("PUT", "/api/v1/commercial/tax-configuration"): ADMIN,
+    # analytics and ai analysis
+    ("GET", "/api/v1/analytics/sales/metrics"): MANAGER,
+    ("GET", "/api/v1/analytics/sales/trend"): MANAGER,
+    ("GET", "/api/v1/analytics/sales/top-products"): MANAGER,
+    ("GET", "/api/v1/analytics/inventory/risk-distribution"): MANAGER,
+    ("GET", "/api/v1/analytics/catalog/product-creation-trend"): MANAGER,
+    ("POST", "/api/v1/ai/analysis"): MANAGER,
     # reports
     ("GET", "/api/v1/reports/history"): ADMIN,
     ("GET", "/api/v1/reports/inventario"): ADMIN,
@@ -279,6 +288,22 @@ def make_user(role_name, company=None, *, is_active=True):
     )
 
 
+class OfflineAnalysisProvider:
+    """Stands in for the external AI provider so no security test can reach it,
+    even on a machine where ZAI_API_KEY is configured."""
+
+    name = "offline"
+
+    def generate(self, **_kwargs):
+        raise RuntimeError("the AI provider is not reachable from the test suite")
+
+
+def _keep_ai_offline(app):
+    from app.services.intelligence import get_analysis_provider
+
+    app.dependency_overrides[get_analysis_provider] = OfflineAnalysisProvider
+
+
 def client_for(user, db=None):
     """TestClient on the real app, signed in as `user`, over a RecordingDB."""
     from main import app
@@ -286,6 +311,7 @@ def client_for(user, db=None):
     db = db if db is not None else RecordingDB()
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: user
+    _keep_ai_offline(app)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -296,6 +322,7 @@ def token_client(db):
 
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides.pop(get_current_user, None)
+    _keep_ai_offline(app)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -313,6 +340,8 @@ TENANT_PREFIXES = (
     "/api/v1/commercial",
     "/api/v1/reports",
     "/api/v1/tasks",
+    "/api/v1/analytics",
+    "/api/v1/ai",
 )
 
 _SCHEMA_RE = re.compile(r"tenant_[0-9a-f]{32}")
@@ -355,6 +384,8 @@ def request_kwargs(key, ref=None) -> dict:
         ("POST", "/api/v1/tasks"): {"titulo": "Tarea"},
         ("PUT", "/api/v1/tasks/{task_id}"): {"titulo": "Tarea 2"},
         ("PATCH", "/api/v1/tasks/{task_id}/status"): {"estado": "completada"},
+        ("PUT", "/api/v1/commercial/tax-configuration"): {"tasa_impuesto": "12"},
+        ("POST", "/api/v1/ai/analysis"): {"scope": "inventory"},
         ("POST", "/api/v1/auth/register"): {
             "name": "Otra", "admin_email": "otra@test.com", "admin_username": "otra_admin",
         },
