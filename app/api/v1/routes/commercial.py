@@ -13,9 +13,28 @@ from app.schemas.commercial import (
     ClientUpdate,
     SaleCreate,
     SaleResponse,
+    TaxConfigurationResponse,
+    TaxConfigurationUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/commercial", tags=["commercial"])
+
+
+@router.get("/tax-configuration", response_model=TaxConfigurationResponse, summary="Obtener configuración tributaria")
+def tax_configuration(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role()),
+):
+    return commercial_service.get_tax_configuration(current_user, db)
+
+
+@router.put("/tax-configuration", response_model=TaxConfigurationResponse, summary="Actualizar configuración tributaria")
+def update_tax_configuration(
+    data: TaxConfigurationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    return commercial_service.update_tax_configuration(data, current_user, db)
 
 
 @router.get("/clients", response_model=list[ClientResponse], summary="Listar clientes")

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from app.schemas.analytics import SalesCustomerType
 from app.schemas.inventory import AnalyticsPeriod
 
@@ -30,12 +30,39 @@ class IntelligentAnalysisRequest(BaseModel):
             raise ValueError("question must not be blank")
         return normalized
 
-    @field_validator("customer_type")
-    @classmethod
-    def validate_customer_filters(cls, value: SalesCustomerType, info):
-        if value == "final_consumer" and info.data.get("client_id") is not None:
-            raise ValueError("client_id cannot be combined with final_consumer customer_type")
-        return value
+    @model_validator(mode="after")
+    def validate_filter_compatibility(self):
+        sales_filters_requested = (
+            self.client_id is not None
+            or self.customer_type != "all"
+        )
+
+        if self.scope in {"inventory", "catalog"} and sales_filters_requested:
+            raise ValueError(
+                "client_id and customer_type filters require a sales or business analysis"
+            )
+
+        if self.customer_type == "final_consumer" and self.client_id is not None:
+            raise ValueError(
+                "client_id cannot be combined with final_consumer customer_type"
+            )
+
+        if self.period == "custom":
+            if self.start_date is None or self.end_date is None:
+                raise ValueError(
+                    "custom period requires both start_date and end_date"
+                )
+
+        elif self.start_date is not None or self.end_date is not None:
+            raise ValueError(
+                "start_date and end_date are only valid with period=custom"
+            )
+
+        if self.start_date is not None and self.end_date is not None:
+            if self.start_date > self.end_date:
+                raise ValueError("start_date must be before or equal to end_date")
+
+        return self
 
 class AnalysisInsight(BaseModel):
     title: str = Field(min_length=1, max_length=120)

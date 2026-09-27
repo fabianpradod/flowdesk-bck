@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from app.models.users import User
 from app.utils.exceptions import AppError
 from app.core.database import SessionLocal
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, token_subject
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "/api/v1/auth/login", description = "JWT Bearer Token")
 
@@ -23,10 +23,16 @@ def get_db() -> Generator:
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     payload = decode_access_token(token)
-    if not payload:
+    # Invitation and reset links are signed with the same key and live 48h. They
+    # carry a purpose claim and must never open a session.
+    if not payload or payload.get("purpose"):
         raise AppError(status_code=401, message="Invalid or expired token")
 
-    user = db.query(User).filter(User.id == payload["sub"]).first()
+    user_id = token_subject(payload)
+    if user_id is None:
+        raise AppError(status_code=401, message="Invalid or expired token")
+
+    user = db.query(User).filter(User.id == user_id).first()
     
     if not user:
         raise AppError(
@@ -39,6 +45,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             status_code=403,
             message="Account is inactive"
         )
+
+    # Tenant routes already refuse an inactive company when resolving the schema,
+    # but the global ones (users, employees, roles) never resolve it.
+    if user.company is not None and not user.company.is_active:
+        raise AppError(status_code=403, message="Company is inactive")
 
     return user
 

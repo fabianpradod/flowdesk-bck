@@ -52,6 +52,7 @@ def build_business_context(
             period=request.period,
             sort_by="stock_risk",
             limit=MAX_RISK_PRODUCTS,
+            product_id=request.product_id,
             start_date=request.start_date,
             end_date=request.end_date,
         )

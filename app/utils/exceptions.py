@@ -25,3 +25,19 @@ def build_error_payload(error: Exception) -> dict:
         "code": getattr(error, "code", "request_error"),
         "errors": getattr(error, "errors", []),
     }
+
+def sanitize_validation_errors(errors) -> list[dict]:
+    """Keep where and why each field failed, drop what was sent.
+
+    Pydantic also returns `input`, the raw value (passwords included), and `ctx`,
+    which can hold a Decimal limit or the ValueError itself. Neither belongs in a
+    response, and since neither is JSON serializable they turned a 422 into a 500.
+    """
+    return [
+        {
+            "loc": list(error.get("loc", ())),
+            "msg": error.get("msg", ""),
+            "type": error.get("type", ""),
+        }
+        for error in errors
+    ]

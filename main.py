@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -20,7 +19,7 @@ from app.api.v1.routes.reports import router as reports_router
 from app.api.v1.routes.tasks import router as tasks_router
 from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.system import router as system_router
-from app.utils.exceptions import build_error_payload
+from app.utils.exceptions import build_error_payload, sanitize_validation_errors
 
 app = FastAPI(
     title = "FlowDesk API",
@@ -72,13 +71,18 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
         content={
             "message": "Invalid request format",
             "code": "validation_error",
-            # Pydantic validator context may contain ValueError instances.
-            # Expose the field/type/message contract, not exceptions or raw input.
-            "errors": jsonable_encoder([
-                {key: error[key] for key in ("type", "loc", "msg") if key in error}
-                for error in exc.errors()
-            ]),
+            "errors": sanitize_validation_errors(exc.errors()),
         },
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, _exc: Exception):
+    # Starlette re-raises the exception after sending this response, so the server
+    # still logs the traceback. The client only gets the generic contract.
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal server error", "code": "internal_error", "errors": []},
     )
 
 app.include_router(auth_router)

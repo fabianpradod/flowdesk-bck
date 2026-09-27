@@ -271,7 +271,7 @@ def test_analysis_role_policy_matches_chat(admin_client, analysis_data, role, ex
 
 @pytest.mark.parametrize("body,field", [
     ({"question": "   \t "}, "question"),
-    ({"client_id": str(uuid4()), "customer_type": "final_consumer"}, "customer_type"),
+    ({"scope": "sales", "client_id": str(uuid4()), "customer_type": "final_consumer"}, None),
 ])
 def test_analysis_validator_errors_return_serializable_422(admin_client, body, field):
     from fastapi.testclient import TestClient
@@ -281,7 +281,29 @@ def test_analysis_validator_errors_return_serializable_422(admin_client, body, f
     assert response.status_code == 422
     payload = response.json()
     assert payload["code"] == "validation_error"
-    assert payload["errors"][0]["loc"] == ["body", field]
+    assert payload["errors"][0]["loc"] == (["body", field] if field else ["body"])
     assert payload["errors"][0]["type"] == "value_error"
     assert "ctx" not in payload["errors"][0]
     assert provider.context is None
+
+
+def test_intelligence_endpoint_requires_manager_role(client, employee_client):
+    response = employee_client.post("/api/v1/ai/analysis", json={})
+    assert response.status_code == 403
+
+def test_intelligence_request_rejects_blank_question():
+    with pytest.raises(ValidationError):
+        IntelligentAnalysisRequest(question="   ")
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"scope": "inventory", "client_id": str(uuid4())},
+        {"scope": "catalog", "customer_type": "registered"},
+        {"scope": "sales", "period": "custom", "start_date": "2026-09-10"},
+        {"scope": "sales", "period": "custom", "start_date": "2026-09-10", "end_date": "2026-09-01"},
+    ],
+)
+def test_intelligence_request_rejects_incompatible_filters(payload):
+    with pytest.raises(ValidationError):
+        IntelligentAnalysisRequest.model_validate(payload)

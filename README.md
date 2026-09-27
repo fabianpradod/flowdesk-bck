@@ -109,7 +109,7 @@ válida, es decir también `employee`.
 | Endpoint | Rol mínimo |
 |---|---|
 | `POST /api/v1/auth/login`, `/password/*` | Público |
-| `GET /health`, `GET /ready` | Público |
+| `GET /`, `GET /health`, `GET /ready` | Público |
 | `POST /api/v1/auth/register` | `superadmin` estricto |
 | `GET /api/v1/companies` | `superadmin` estricto |
 | `POST /api/v1/auth/employees`, `GET /api/v1/auth/employees` | `admin` |
@@ -126,10 +126,15 @@ válida, es decir también `employee`.
 | `DELETE /api/v1/inventory/suppliers/{id}` | `admin` |
 | `GET /api/v1/commercial/clients`, `/clients/{id}` | Autenticado |
 | `GET /api/v1/commercial/sales/{id}`, `/clients/{id}/purchases` | Autenticado |
+| `GET /api/v1/analytics/*` | `manager` o `admin` estricto |
+| `POST /api/v1/ai/analysis` | `manager` o `admin` estricto |
+| `POST /api/v1/ai/chat`, `GET /api/v1/ai/conversations`, `GET/DELETE /api/v1/ai/conversations/{id}` | `manager` o `admin` estricto; conversaciones propias |
 | `POST /api/v1/commercial/clients`, `/sales` | `manager` |
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
 | `DELETE /api/v1/commercial/clients/{id}` | `admin` |
+| `GET /api/v1/commercial/tax-configuration` | Autenticado |
+| `PUT /api/v1/commercial/tax-configuration` | `admin` |
 | `GET/POST/PUT/PATCH/DELETE /api/v1/tasks/*` | Autenticado, y solo sobre tareas propias |
 
 Dos reglas del dependency que conviene tener presentes:
@@ -146,6 +151,20 @@ Dos reglas del dependency que conviene tener presentes:
 Las restricciones por empresa son independientes del rol: `get_user_schema_name`
 resuelve el esquema desde `current_user.company`, así que ningún endpoint de
 inventario o comercial puede leer datos de otro tenant, sea cual sea su rol.
+En las tablas globales el filtro lo hacen los services: un usuario de otra empresa
+responde 404, igual que uno inexistente. Un usuario de una empresa inactiva
+recibe 403 en todas las rutas y tampoco puede iniciar sesión.
+
+La tabla anterior tiene su copia ejecutable en `ROUTE_POLICY`, dentro de
+`tests/security_helpers.py`. `tests/test_security_route_inventory.py` la compara
+con las rutas que la aplicación registra de verdad: falla si aparece un endpoint
+sin clasificar, si queda una entrada de una ruta que ya no existe o si el guard de
+una ruta no coincide con su política. Al agregar un endpoint hay que actualizar
+las dos, la tabla del README y `ROUTE_POLICY`.
+
+La revisión de seguridad de septiembre de 2026, con sus hallazgos, correcciones y
+recomendaciones pendientes, está en
+[docs/revision-seguridad.md](docs/revision-seguridad.md).
 
 ## Desactivación de clientes y proveedores
 
@@ -218,36 +237,25 @@ directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
 El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
 empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
 
-### Tareas
+### Reglas tributarias y cálculo de impuestos
 
-Los estados válidos son `pendiente`, `en_progreso`, `completada` y `cancelada`;
-las prioridades son `baja`, `media`, `alta` y `urgente`. Todas las consultas se
-restringen al usuario y al esquema tenant autenticados.
+#### Configuración tributaria
+La configuración tributaria pertenece al esquema de cada tenant (tabla `configuracion_tributaria`).
+- **Consulta**: Cualquier usuario autenticado puede consultar la tasa actual con `GET /api/v1/commercial/tax-configuration`.
+- **Actualización**: Solo los roles `admin` y `superadmin` pueden modificarla mediante `PUT /api/v1/commercial/tax-configuration`.
+- **Tasa permitida**: La `tasa_impuesto` debe ser un valor decimal entre `0.00` y `100.00` con hasta 2 decimales.
+- **Compatibilidad**: Tenants sin configuración explícita utilizan una tasa predeterminada de `0.00` (sin recargo fiscal).
 
-| Método | Path | Descripción |
-|---|---|---|
-
-Todos los endpoints de reportes requieren rol admin o superior.
-
-| Método | Path | Notas |
-|---|---|---|
-| GET | `/history` | Historial de reportes generados. `?limit=` entre 1 y 100 (default 20) |
-| GET | `/inventario` | Stock actual. Filtros `?product_id=`, `?is_active=`, `?only_low_stock=` |
-| GET | `/movimientos` | Movimientos del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?product_id=`, `?movement_type=` |
-| GET | `/alertas` | Alertas del período. Filtros `?period=`, `?start_date=`, `?end_date=`, `?open_only=` |
-
-Los tres reportes aceptan `?format=csv` (default) o `?format=pdf` y responden con el
-archivo como descarga (`Content-Disposition: attachment`), no con JSON.
-
-`period` acepta `7d`, `30d` (default), `90d`, `6m`, `12m`, `ytd` o `custom`; con `custom` hay
-que enviar `start_date` y `end_date`, de lo contrario la API responde 400.
-
-Cada generación queda registrada en la tabla `reporte` del esquema de la empresa y se
-consulta con `GET /history`. El archivo no se almacena en el servidor — se transmite
-directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
-
-El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
-empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
+#### Reglas de cálculo en ventas
+Al registrar una venta mediante `POST /api/v1/commercial/sales`:
+1. **Subtotal**: Suma de las líneas de detalle (`cantidad * precio_unitario`), redondeado cada ítem con `ROUND_HALF_UP` a 2 decimales.
+2. **Descuento**: Monto descontado del subtotal (`0 <= descuento <= subtotal`).
+3. **Impuesto aplicable**:
+   - Para operaciones gravadas (`es_exenta=false`), se calcula: `impuesto = round(subtotal * (tasa_impuesto / 100))`.
+   - Para operaciones exentas (`es_exenta=true`), el impuesto es forzado a `0.00` sin alterar el registro histórico de la tasa aplicable.
+4. **Total final**: `total = subtotal - descuento + impuesto`.
+5. **Redondeo monetario**: Se utiliza redondeo aritmético simétrico (`ROUND_HALF_UP`) con precisión a centavos (`0.01`).
+6. **Almacenamiento del desglose**: La venta almacena `subtotal`, `descuento`, `impuesto`, `tasa_impuesto`, `es_exenta` y `total` para auditoría e histórico inmutable.
 
 ### Tareas
 

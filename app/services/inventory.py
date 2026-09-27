@@ -185,9 +185,10 @@ def update_supplier(data: SupplierUpdate, current_user: User, db: Session, suppl
     try:
         db.execute(update(suppliers).where(suppliers.c.id == supplier_id).values(**changes))
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Failed to update supplier: {str(e)}")
+        logger.exception("Failed to update supplier %s", supplier_id)
+        raise AppError(500, "Failed to update supplier")
 
     return _fetch_supplier(db, suppliers, supplier_id)
 
@@ -262,9 +263,10 @@ def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool) -
             .values(is_active=is_active, updated_at=_utcnow())
         )
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Failed to update supplier status: {str(e)}")
+        logger.exception("Failed to update supplier status %s", supplier_id)
+        raise AppError(500, "Failed to update supplier status")
 
 
 def list_products(current_user: User, db: Session) -> list[dict]:
@@ -393,12 +395,10 @@ def create_supplier_product(data: SupplierProductCreate, current_user: User, db:
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(
-            status_code=500,
-            message=f"Failed to create supplier product: {str(e)}",
-        )
+        logger.exception("Failed to create supplier product")
+        raise AppError(status_code=500, message="Failed to create supplier product")
 
     return dict(result)
 
@@ -541,12 +541,10 @@ def update_supplier_product(data: SupplierProductUpdate, current_user: User, db:
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(
-            status_code=500,
-            message=f"Failed to update supplier product: {str(e)}",
-        )
+        logger.exception("Failed to update supplier product %s", supplier_product_id)
+        raise AppError(status_code=500, message="Failed to update supplier product")
 
     return dict(result)
 
@@ -582,12 +580,10 @@ def delete_supplier_product(
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(
-            status_code=500,
-            message=f"Failed to delete supplier product: {str(e)}",
-        )
+        logger.exception("Failed to delete supplier product %s", supplier_product_id)
+        raise AppError(status_code=500, message="Failed to delete supplier product")
 
     return None
 
@@ -958,9 +954,10 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
             now=now,
         )
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Inventory movement failed: {str(e)}")
+        logger.exception("Inventory movement failed for product %s", data.producto_id)
+        raise AppError(500, "Inventory movement failed")
 
     row = db.execute(
         select(movements).where(movements.c.id == movement_id)
@@ -1029,11 +1026,17 @@ def get_product_analytics(
     period: AnalyticsPeriod,
     sort_by: ProductAnalyticsSort,
     limit: int,
+    product_id: UUID | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict:
     analytics_range = _resolve_analytics_range(period, start_date, end_date)
-    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id=None)
+    rows = _fetch_analytics_rows(
+        current_user,
+        db,
+        analytics_range,
+        product_id=product_id,
+    )
     products = _rank_product_rows(rows, sort_by=sort_by, limit=limit)
     return {
         "period": period,
@@ -1219,7 +1222,11 @@ def _resolve_analytics_range(
     elif period == "ytd":
         resolved_start = datetime(resolved_end.year, 1, 1, tzinfo=timezone.utc)
     else:
-        resolved_start = resolved_end - timedelta(days=PERIOD_DAYS[period])
+        try:
+            resolved_start = resolved_end - timedelta(days=PERIOD_DAYS[period])
+        except OverflowError:
+            # An end_date in the first days of year 1 leaves no room for the period.
+            raise AppError(status_code=400, message="end_date is too early for the selected period")
 
     if resolved_start > resolved_end:
         raise AppError(status_code=400, message="start_date must be before end_date")
@@ -1454,9 +1461,10 @@ def update_product_status(current_user: User, db: Session, product_id, is_active
             .values(is_active=is_active, updated_at=now)
         )
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise AppError(500, f"Failed to update product status: {str(e)}")
+        logger.exception("Failed to update product status %s", product_id)
+        raise AppError(500, "Failed to update product status")
 
     updated = db.execute(
         select(products).where(products.c.id == product_id)

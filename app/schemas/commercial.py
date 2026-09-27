@@ -78,7 +78,7 @@ class SaleCreate(BaseModel):
     cliente_id: UUID | None = None
     items: list[SaleItemCreate] = Field(min_length=1, max_length=100)
     descuento: Decimal = Field(default=Decimal("0"), ge=0, max_digits=10, decimal_places=2)
-    impuesto: Decimal = Field(default=Decimal("0"), ge=0, max_digits=10, decimal_places=2)
+    es_exenta: bool = False
 
     @model_validator(mode="after")
     def reject_duplicate_products(self):
@@ -106,6 +106,14 @@ class SaleResponse(BaseModel):
     subtotal: Decimal
     descuento: Decimal
     impuesto: Decimal
+    tasa_impuesto: Decimal
+    es_exenta: bool
     total: Decimal
     estado: str
     items: list[SaleItemResponse]
+
+class TaxConfigurationUpdate(BaseModel):
+    tasa_impuesto: Decimal = Field(ge=0, le=100, max_digits=5, decimal_places=2)
+
+class TaxConfigurationResponse(BaseModel):
+    tasa_impuesto: Decimal

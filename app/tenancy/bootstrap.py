@@ -1,8 +1,7 @@
 import re
 from uuid import UUID
-
-from sqlalchemy import text
-
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import NoInspectionAvailable
 from app.models.tenant.registry import build_tenant_metadata, get_tenant_table_names
 
 
@@ -27,3 +26,48 @@ def bootstrap_tenant_schema(connection, schema_name: str) -> None:
         for table_name in get_tenant_table_names()
     ]
     metadata.create_all(bind=connection, tables=tenant_tables)
+    _migrate_existing_tenant_schema(connection, schema_name)
+
+def _migrate_existing_tenant_schema(connection, schema_name: str) -> None:
+    try:
+        inspector = inspect(connection)
+    except NoInspectionAvailable:
+        return
+
+    required_columns = {
+        "venta": {
+            "tasa_impuesto": "NUMERIC(5, 2) NOT NULL DEFAULT 0",
+            "es_exenta": "BOOLEAN NOT NULL DEFAULT FALSE",
+        },
+    }
+
+    for table_name, columns in required_columns.items():
+        existing = {
+            column["name"]
+
+            for column in inspector.get_columns(table_name, schema=schema_name)
+        }
+
+        for column_name, ddl in columns.items():
+            if column_name not in existing:
+                connection.execute(
+                    text(
+                        f'ALTER TABLE "{schema_name}"."{table_name}" '
+                        f'ADD COLUMN "{column_name}" {ddl}'
+                    )
+                )
+
+    config = f'"{schema_name}"."configuracion_tributaria"'
+    connection.execute(
+        text(
+            f"""
+            DELETE FROM {config}
+            WHERE id NOT IN (
+                SELECT id
+                FROM {config}
+                ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST, id
+                LIMIT 1
+            )
+            """
+        )
+    )
