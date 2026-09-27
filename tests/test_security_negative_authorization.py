@@ -6,12 +6,16 @@ guard legitimately (an admin is allowed on /users) but try to reach further than
 the role allows.
 """
 
+import threading
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
-from app.core.security import create_access_token
+from app.api.dependencies.auth import get_db
+from app.core.security import create_access_token, verify_password
 from app.models.users import User
 from main import app
 from tests.security_helpers import (
@@ -210,6 +214,101 @@ def test_an_invitation_cannot_overwrite_an_active_users_password(client):
 
     assert response.status_code == 400
     assert admin.password == password_before
+
+
+class _InvitationRace:
+    """One pending user shared by two concurrent requests.
+
+    Each request gets its own session and reads its own snapshot of the row, like
+    two database sessions. Both lookups wait at a barrier, so both read the empty
+    password before either writes: the interleaving that reproduced the bug on
+    Postgres. Writes are serialized like row locks, and a conditional UPDATE
+    re-checks its WHERE against the latest committed row.
+    """
+
+    def __init__(self, user):
+        self.user = user
+        self.barrier = threading.Barrier(2, timeout=5)
+        self.lock = threading.Lock()
+
+
+class _RaceSession:
+    def __init__(self, race):
+        self.race = race
+        self.snapshot = None
+
+    def query(self, _model):
+        return _RaceQuery(self)
+
+    def commit(self):
+        # A read-check-assign flow writes its snapshot back on commit.
+        if self.snapshot is not None and self.snapshot.password != "":
+            with self.race.lock:
+                self.race.user.password = self.snapshot.password
+                self.race.user.is_active = self.snapshot.is_active
+
+    def rollback(self):
+        pass
+
+
+class _RaceQuery:
+    def __init__(self, session):
+        self.session = session
+        self.criteria = []
+
+    def filter(self, *criteria):
+        self.criteria.extend(criteria)
+        return self
+
+    def _matches(self, row):
+        return all(
+            str(getattr(row, expr.left.key)) == str(expr.right.value) for expr in self.criteria
+        )
+
+    def first(self):
+        race = self.session.race
+        snapshot = SimpleNamespace(**vars(race.user))
+        self.session.snapshot = snapshot
+        race.barrier.wait()
+        return snapshot if self._matches(snapshot) else None
+
+    def update(self, values, **_kwargs):
+        race = self.session.race
+        with race.lock:
+            if not self._matches(race.user):
+                return 0
+            for column, value in values.items():
+                setattr(race.user, column.key, value)
+            self.session.snapshot = None
+            return 1
+
+
+def test_two_simultaneous_uses_of_one_invitation_let_only_one_through():
+    """Both requests used to pass the empty password check and both answered 200;
+    only the last password to be written survived."""
+    race = _InvitationRace(SimpleNamespace(id=uuid4(), password="", is_active=False))
+    app.dependency_overrides[get_db] = lambda: _RaceSession(race)
+    token = _invitation_for(race.user)
+    statuses = {}
+
+    def use(password):
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/api/v1/auth/password/set", json={"token": token, "new_password": password}
+        )
+        statuses[password] = response.status_code
+
+    threads = [threading.Thread(target=use, args=(password,)) for password in ("First-123!", "Second-123!")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert sorted(statuses.values()) == [200, 400], statuses
+    winner = next(password for password, status in statuses.items() if status == 200)
+    loser = next(password for password, status in statuses.items() if status == 400)
+    assert verify_password(winner, race.user.password)
+    assert not verify_password(loser, race.user.password)
+    assert race.user.is_active is True
 
 
 # Tasks: every role may use them, but only on its own records
