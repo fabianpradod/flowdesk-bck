@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
@@ -22,4 +24,15 @@ def decode_access_token(token: str) -> dict:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except JWTError:
+        return None
+
+def token_subject(payload: dict) -> UUID | None:
+    """The user id in a decoded token, or None when sub is missing or not a UUID.
+
+    Reading payload["sub"] directly raised KeyError on a token without it, and a
+    non UUID value only failed later on the database cast. Both answered 500.
+    """
+    try:
+        return UUID(str(payload["sub"]))
+    except (KeyError, ValueError):
         return None

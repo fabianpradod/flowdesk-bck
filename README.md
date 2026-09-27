@@ -102,7 +102,7 @@ válida, es decir también `employee`.
 | Endpoint | Rol mínimo |
 |---|---|
 | `POST /api/v1/auth/login`, `/password/*` | Público |
-| `GET /health`, `GET /ready` | Público |
+| `GET /`, `GET /health`, `GET /ready` | Público |
 | `POST /api/v1/auth/register` | `superadmin` estricto |
 | `GET /api/v1/companies` | `superadmin` estricto |
 | `POST /api/v1/auth/employees`, `GET /api/v1/auth/employees` | `admin` |
@@ -125,6 +125,8 @@ válida, es decir también `employee`.
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
 | `DELETE /api/v1/commercial/clients/{id}` | `admin` |
+| `GET /api/v1/commercial/tax-configuration` | Autenticado |
+| `PUT /api/v1/commercial/tax-configuration` | `admin` |
 | `GET/POST/PUT/PATCH/DELETE /api/v1/tasks/*` | Autenticado, y solo sobre tareas propias |
 
 Dos reglas del dependency que conviene tener presentes:
@@ -141,6 +143,20 @@ Dos reglas del dependency que conviene tener presentes:
 Las restricciones por empresa son independientes del rol: `get_user_schema_name`
 resuelve el esquema desde `current_user.company`, así que ningún endpoint de
 inventario o comercial puede leer datos de otro tenant, sea cual sea su rol.
+En las tablas globales el filtro lo hacen los services: un usuario de otra empresa
+responde 404, igual que uno inexistente. Un usuario de una empresa inactiva
+recibe 403 en todas las rutas y tampoco puede iniciar sesión.
+
+La tabla anterior tiene su copia ejecutable en `ROUTE_POLICY`, dentro de
+`tests/security_helpers.py`. `tests/test_security_route_inventory.py` la compara
+con las rutas que la aplicación registra de verdad: falla si aparece un endpoint
+sin clasificar, si queda una entrada de una ruta que ya no existe o si el guard de
+una ruta no coincide con su política. Al agregar un endpoint hay que actualizar
+las dos, la tabla del README y `ROUTE_POLICY`.
+
+La revisión de seguridad de septiembre de 2026, con sus hallazgos, correcciones y
+recomendaciones pendientes, está en
+[docs/revision-seguridad.md](docs/revision-seguridad.md).
 
 ## Desactivación de clientes y proveedores
 

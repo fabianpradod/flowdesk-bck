@@ -18,10 +18,16 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
         raise AppError(404, "User not found")
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
+    # Another company's user answers like a missing one. A 403 told an admin that
+    # the id exists in some other company.
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
+        raise AppError(404, "User not found")
 
-    if data.username is not None:
+    if data.username is not None and data.username != user.username:
+        # Usernames are unique across companies; without this check the unique
+        # index caught the duplicate and the request answered 500.
+        if db.query(User).filter(User.username == data.username).first():
+            raise AppError(400, "Username already registered")
         user.username = data.username
     if data.role_id is not None:
         role = db.query(Role).filter(Role.id == data.role_id).first()
@@ -40,10 +46,12 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise AppError(404, "User not found")
+    if user.id == current_user.id:
+        raise AppError(400, "Cannot change your own status")
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot modify a superadmin user")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
+        raise AppError(404, "User not found")
 
     user.is_active = data.is_active
     db.commit()
@@ -60,7 +68,7 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
     if user.role.name == "superadmin":
         raise AppError(403, "Cannot delete a superadmin user")
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
-        raise AppError(403, "Not authorized")
+        raise AppError(404, "User not found")
 
     user.is_active = False
     db.commit()
