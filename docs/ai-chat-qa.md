@@ -79,6 +79,8 @@ After a transport error with uncertain outcome, reload rather than silently rese
 | Invalid model arguments | Safe correction opportunity within tool/round budget |
 | Provider/network/database failure | Stable error, no partial saved turn |
 | Excessive tools/output/time | Bounded failure; no partial saved turn |
+| 45 concurrent chats from one user / multiple users | At most 1 / 8 generations per process; excess requests return 429 before any provider call; health and inventory respond while admitted chats remain pending |
+| Failed or cancelled generation | Both user and global slots are released |
 | Existing/new tenants | Repeatable upgrade / bootstrap creates chat tables |
 
 Manual live acceptance after billing should cover: a simple sales question, a
@@ -90,7 +92,8 @@ figures against seeded database results, not only plausible wording.
 ## Deployment review
 
 The API startup upgrades existing tenants. Review this schema addition with the
-branch, and include the `chat_cleanup` service when deploying Compose. Confirm its
+branch; it does not delete expired history at startup. Include the `chat_cleanup`
+service when deploying Compose; it reuses the image built by `api`. Confirm its
 startup and hourly cleanup logs; the API hides expired data even if cleanup fails.
 No live database migrations, Jira transitions, teammate messages, merges or deploys
 have been performed by this task. Provider keys stay in the ignored local `.env`

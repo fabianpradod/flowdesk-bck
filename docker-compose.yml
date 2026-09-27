@@ -19,6 +19,7 @@ services:
 
   api:
     build: .
+    image: flowdesk-api:local
     container_name: flowdesk-api
     restart: always
     env_file:
@@ -39,7 +40,7 @@ services:
       - no-new-privileges:true
 
   chat_cleanup:
-    build: .
+    image: flowdesk-api:local
     restart: always
     command: ["python", "-m", "app.services.chat_maintenance", "--watch"]
     env_file:

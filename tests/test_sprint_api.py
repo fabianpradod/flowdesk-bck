@@ -219,20 +219,24 @@ def test_demo_seed_is_skipped_when_disabled():
     engine.connect.return_value = connection_context
     connection = engine.connect.return_value.__enter__.return_value
     session = Mock()
+    schema = f"tenant_{uuid4().hex}"
+    session.query.return_value.filter.return_value.all.return_value = [SimpleNamespace(schema_name=schema)]
 
     with (
         patch.object(init_db, "get_engine", return_value=engine),
         patch.object(init_db, "SessionLocal", return_value=session),
         patch.object(init_db.Base.metadata, "create_all"),
+        patch.object(init_db, "bootstrap_tenant_schema") as bootstrap_mock,
         patch.object(init_db, "seed_roles"),
         patch.object(init_db, "seed_superadmin"),
         patch.object(init_db, "seed_demo_data") as seed_demo_mock,
         patch.object(init_db, "DEMO_SEED_ENABLED", False),
-        patch.object(init_db, "maintain_chat") as maintain_chat_mock,
+        patch("app.services.chat_maintenance.maintain_chat", side_effect=RuntimeError("cleanup unavailable")) as maintain_chat_mock,
     ):
         init_db.init_db()
 
     connection.execute.assert_called()
     seed_demo_mock.assert_not_called()
-    maintain_chat_mock.assert_called_once_with(engine, upgrade=True)
+    maintain_chat_mock.assert_not_called()
+    bootstrap_mock.assert_called_once_with(session.connection.return_value, schema)
     session.close.assert_called_once()

@@ -560,3 +560,76 @@ def test_filtered_analytics_and_analysis_share_real_tenant_totals(api, database,
     assert response.status_code == 200, response.text
     assert Decimal(str(provider.context["sales_metrics"]["net_sales"])) == Decimal(expected)
     assert any("allocated" in note for note in provider.context["data_limitations"])
+
+
+@pytest.mark.parametrize("same_user,admitted", [(True, 1), (False, 8)])
+def test_postgres_chat_load_leaves_health_and_inventory_available(database, api, same_user, admitted):
+    if database.engine.dialect.name != "postgresql":
+        pytest.skip("Concurrent sessions require the disposable PostgreSQL database")
+    from threading import Event, Lock
+    from uuid import UUID
+    import httpx
+    from fastapi import Header
+
+    _, manager, _ = api
+    released = Event()
+    lock = Lock()
+    calls = 0
+
+    class Provider:
+        async def complete(self, **kwargs):
+            nonlocal calls
+            with lock:
+                calls += 1
+            while not released.is_set():
+                await asyncio.sleep(0.01)
+            return reply("Ready")
+
+    def session():
+        with Session(database.engine) as db:
+            yield db
+
+    def current_user(x_user: str = Header(default=str(manager.id))):
+        return SimpleNamespace(**{**vars(manager), "id": UUID(x_user)})
+
+    app.dependency_overrides[get_db] = session
+    app.dependency_overrides[get_current_user] = current_user
+    app.dependency_overrides[get_chat_provider] = Provider
+    users = [manager.id, *[uuid4() for _ in range(admitted - 1)]]
+    global_users = build_tenant_metadata(database.actor.schema_name).tables["global.users"]
+    if users[1:]:
+        with database.engine.begin() as connection:
+            connection.execute(insert(global_users), [{"id": user} for user in users[1:]])
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            def post(user):
+                return client.post("/api/v1/ai/chat", headers={"x-user": str(user)}, json={"message": "Hello"})
+            active = [asyncio.create_task(post(user)) for user in users]
+            try:
+                async with asyncio.timeout(5):
+                    while calls < admitted:
+                        await asyncio.sleep(0.01)
+                rejected = [post(users[0] if same_user else uuid4()) for _ in range(45 - admitted)]
+                responses = await asyncio.wait_for(asyncio.gather(
+                    *rejected, client.get("/health"), client.get("/api/v1/inventory/products"),
+                ), 5)
+                assert all(response.status_code == 429 for response in responses[:-2])
+                assert all(response.status_code == 200 for response in responses[-2:])
+                assert calls == admitted
+                assert all(not task.done() for task in active)
+            finally:
+                released.set()
+                completed = await asyncio.gather(*active, return_exceptions=True)
+            assert all(response.status_code == 200 for response in completed)
+            assert (await post(users[0])).status_code == 200
+            assert calls == admitted + 1
+    try:
+        asyncio.run(scenario())
+        conversations = get_tenant_tables(database.actor.schema_name)["chat_conversation"]
+        assert database.db.scalar(select(func.count()).select_from(conversations)) == admitted + 1
+        database.db.rollback()
+    finally:
+        if users[1:]:
+            with database.engine.begin() as connection:
+                connection.execute(global_users.delete().where(global_users.c.id.in_(users[1:])))

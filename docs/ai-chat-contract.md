@@ -138,6 +138,7 @@ Route-level errors use existing 401/403/422 handling plus:
 | 404 | `conversation_not_found` | Missing, other owner/company, expired or deleted conversation |
 | 409 | `conversation_conflict` | Another successful turn changed this conversation; reload before retrying |
 | 422 | `invalid_cursor` | Invalid pagination cursor |
+| 429 | `ai_chat_busy` | This user already has an active chat, or all chat slots are occupied; retry after an active request finishes |
 | 502 | `ai_tool_limit` | Tool count, round or cumulative data context budget exhausted |
 | 502 | `ai_tool_result_too_large` | A tool result exceeded its output bound |
 | 503 | `ai_data_unavailable` | Query/storage failure or database statement timeout |
@@ -206,6 +207,18 @@ write tool or tenant-selection argument. Product names/SKUs and tool data are
 untrusted context. User-entered messages are sent to Z.AI and stored as entered;
 this is not an automatic PII scrubber for text a user chooses to type.
 
+Admission is nonblocking: each API process accepts at most **8 simultaneous chat
+generations**, and **1 per user within their company**, across all conversations.
+Excess requests return `429 / ai_chat_busy` before calling the provider or saving
+a turn. Slots are released on success, failure, or cancellation when the worker
+finishes. A disconnected client does not free a slot while its worker is still
+running. Clients should prevent duplicate submissions and let users retry after
+an active request finishes. These are in-flight limits, not a daily spending quota.
+They are process-local: multiple API workers/replicas multiply the total capacity
+and can each admit one request from the same user. The current Compose deployment
+runs one worker; a shared admission store is needed for deployment-wide limits
+if it scales out. Keep chat capacity well below the worker pool (currently 40).
+
 Limits: 60-second model/tool orchestration budget; provider calls also respect
 `ZAI_TIMEOUT_SECONDS`; PostgreSQL statement/lock waits are capped at five seconds
 (and reduced to the remaining budget during generation). Final persistence uses
@@ -216,15 +229,16 @@ all tool context by 48,000 characters. No provider retries run automatically.
 ## Retention and schema lifecycle
 
 New tenant bootstrap creates `chat_conversation` and `chat_message`. API startup
-idempotently creates these tables for existing registered tenants and removes
-expired history. Existing business tables are not recreated. Conversations are
+idempotently creates these tables for existing registered tenants through the
+tenant bootstrap. Startup does not purge history; cleanup failures cannot abort
+API boot. Existing business tables are not recreated. Conversations are
 inaccessible at `expires_at` even before cleanup runs. Reads never refresh expiry;
 a successful new turn sets it to 15 days after that turn. Manual deletion removes
 messages through the database foreign-key cascade.
 
 `docker-compose.yml` includes an hourly `chat_cleanup` process. It uses the same
-application image/database and deletes expired conversations (including inactive
-companies) with cascading message deletion. Configure an equivalent recurring
+application image/database (built once by `api`) and deletes expired conversations
+(including inactive companies) with cascading message deletion. Configure an equivalent recurring
 job if deploying without Compose:
 
 ```sh

@@ -9,6 +9,7 @@ from app.api.dependencies.ai import get_chat_provider, get_chat_db
 from app.api.dependencies.auth import require_role
 from app.schemas.chat import ChatRequest, ChatResponse, ConversationDetail, ConversationList
 from app.services.chat import answer_chat
+from app.services.chat_admission import admit_chat
 from app.services.chat_store import ChatActor, ConversationStore
 from app.tenancy.runtime import get_user_schema_name
 
@@ -23,7 +24,8 @@ def get_chat_actor(user=Depends(require_role("manager", "admin", strict=True))):
 def chat(request: ChatRequest, actor=Depends(get_chat_actor), db: Session = Depends(get_chat_db),
          provider=Depends(get_chat_provider)):
     # Sync SQLAlchemy stays on FastAPI's worker thread, including across model awaits.
-    return asyncio.run(answer_chat(request, db=db, actor=actor, provider=provider))
+    with admit_chat(actor):
+        return asyncio.run(answer_chat(request, db=db, actor=actor, provider=provider))
 
 
 @router.get("/conversations", response_model=ConversationList)

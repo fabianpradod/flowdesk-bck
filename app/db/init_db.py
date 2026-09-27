@@ -4,7 +4,6 @@ from app.models.users import User
 from app.db.seeder import seed_demo_data, seed_roles, seed_superadmin
 from app.models.companies import Company
 from app.core.config import DEMO_SEED_ENABLED
-from app.services.chat_maintenance import maintain_chat
 from app.core.database import Base, SessionLocal, get_engine
 from app.tenancy.bootstrap import bootstrap_tenant_schema
 
@@ -29,5 +28,3 @@ def init_db():
             seed_demo_data(db)
     finally:
         db.close()
-
-    maintain_chat(engine, upgrade=True)
