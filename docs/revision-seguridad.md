@@ -5,7 +5,8 @@ entre empresas. Revisión hecha sobre `main` en `efb82ae`, septiembre de 2026.
 
 ## Alcance
 
-- Las 55 rutas que registra la aplicación, públicas y protegidas.
+- Las rutas que registra la aplicación, públicas y protegidas: 55 al empezar, 63
+  después de integrar el PR #32.
 - Autenticación: tokens de acceso, tokens de invitación y de recuperación.
 - Autorización por rol, positiva y negativa.
 - Aislamiento entre empresas, tanto en los esquemas `tenant_*` como en las tablas
@@ -14,8 +15,9 @@ entre empresas. Revisión hecha sobre `main` en `efb82ae`, septiembre de 2026.
   reportes que reutilizan su rango de fechas.
 - Manejo de errores: qué ve el cliente cuando algo falla.
 
-Fuera de alcance: los módulos `/api/v1/analytics` y `/api/v1/ai` que todavía no
-están en `main` (ver F12), infraestructura y dependencias.
+Los módulos `/api/v1/analytics` y `/api/v1/ai` llegaron a `main` con el PR #32
+durante la revisión y quedaron cubiertos por las mismas pruebas (ver F12). Fuera de
+alcance: infraestructura y dependencias.
 
 ## Método
 
@@ -40,9 +42,8 @@ están en `main` (ver F12), infraestructura y dependencias.
 
 ## Resumen
 
-25 hallazgos: 3 altos, 12 medios y 10 bajos. 16 corregidos en esta revisión, 8
-documentados como recomendación y 1 en seguimiento hasta que se integre el módulo
-nuevo de analítica.
+25 hallazgos: 3 altos, 12 medios y 10 bajos. 16 corregidos en esta revisión, 1
+corregido en el PR #32 y verificado aquí, y 8 documentados como recomendación.
 
 Estados: **Verificado** es corregido y comprobado contra PostgreSQL real en la
 validación final. **Corregido** es corregido y cubierto por pruebas automatizadas,
@@ -62,7 +63,7 @@ la base caída o el SMTP caído).
 | F09 | Media | Analítica | Fechas cercanas al año 1 desbordaban el cálculo del rango y respondían 500 | Verificado |
 | F10 | Media | Aislamiento | Usuarios de una empresa inactiva podían iniciar sesión y usar las rutas globales | Verificado |
 | F11 | Media | Aislamiento | Un id de usuario de otra empresa respondía 403 y uno inexistente 404 | Verificado |
-| F12 | Media | Analítica | Las rutas nuevas de `/api/v1/analytics` y `/api/v1/ai` solo exigen sesión | Seguimiento |
+| F12 | Media | Analítica | Las rutas nuevas de `/api/v1/analytics` y `/api/v1/ai` solo exigían sesión | Verificado |
 | F13 | Baja | Autenticación | Un token sin `sub` válido respondía 500 | Verificado |
 | F14 | Baja | Errores | Las excepciones no controladas respondían texto plano fuera del contrato JSON | Corregido |
 | F15 | Baja | Autorización | Un admin podía desactivar su propia cuenta con `PATCH /users/{id}/status` | Verificado |
@@ -93,7 +94,7 @@ recuperación de un admin>` respondía 200 con el listado de usuarios.
 `purpose`.
 
 **Prueba.** `test_security_authentication.py`, casos `set password token` y `reset
-password token` sobre las 48 rutas protegidas.
+password token` sobre todas las rutas protegidas.
 
 ### F02. Invitación reutilizable
 
@@ -204,19 +205,21 @@ contraseña para no revelar qué correos existen.
 | Correo o username ocupados | 500 | 400 |
 | Error no controlado | Texto plano | JSON con `code: internal_error` |
 
-## Seguimiento: F12
+## F12, resuelto en el PR #32
 
-Los PRs #31 y #32 agregan `/api/v1/analytics/*` (métricas y tendencia de ventas,
-riesgo de inventario, productos más vendidos, tendencia de creación de productos) y
-`POST /api/v1/ai/analysis`. Resuelven el esquema con `get_user_schema_name`, así
-que el aislamiento entre empresas está bien, pero todas usan `get_current_user`:
-cualquier `employee` ve las métricas de ventas y puede disparar el análisis, que
+El PR #32 agregó `/api/v1/analytics/*` (métricas y tendencia de ventas, riesgo de
+inventario, productos más vendidos, tendencia de creación de productos) y
+`POST /api/v1/ai/analysis`. En su primera versión todas usaban `get_current_user`:
+cualquier `employee` veía las métricas de ventas y podía disparar el análisis, que
 envía agregados de la empresa a un proveedor externo con costo por llamada.
 
-Recomendación: `require_role("manager")` en las dos, igual que la analítica de
-inventario, y un límite de solicitudes por empresa en `/ai/analysis`. Cuando se
-integren, `test_security_route_inventory.py` va a fallar hasta que las rutas se
-clasifiquen en `ROUTE_POLICY`: es el aviso buscado.
+Antes de integrarse pasaron a `require_role("manager")`, igual que la analítica de
+inventario. Al integrar `main` en esta rama se clasificaron en `ROUTE_POLICY`, así
+que las pruebas de credenciales, roles, roles negados, esquema propio y fechas
+fuera de rango las recorren igual que al resto. Las cinco rutas de analítica usan
+`_resolve_analytics_range`, por lo que la corrección de F09 también las cubre.
+
+Queda como recomendación un límite de solicitudes por empresa en `/ai/analysis`.
 
 ## Recomendaciones
 
@@ -247,19 +250,23 @@ clasifiquen en `ROUTE_POLICY`: es el aviso buscado.
 
 | Archivo | Qué cubre | Pruebas |
 |---|---|---|
-| `test_security_route_inventory.py` | Toda ruta clasificada y su guard alineado | 113 |
-| `test_security_authentication.py` | Credenciales inválidas en cada ruta protegida | 636 |
-| `test_security_roles.py` | Cada rol permitido pasa el guard | 142 |
-| `test_security_negative_authorization.py` | Roles insuficientes y escalamiento | 104 |
-| `test_security_tenant_isolation.py` | Cada consulta nombra solo el esquema propio | 169 |
+| `test_security_route_inventory.py` | Toda ruta clasificada y su guard alineado | 129 |
+| `test_security_authentication.py` | Credenciales inválidas en cada ruta protegida | 740 |
+| `test_security_roles.py` | Cada rol permitido pasa el guard | 166 |
+| `test_security_negative_authorization.py` | Roles insuficientes, escalamiento e invitaciones | 120 |
+| `test_security_tenant_isolation.py` | Cada consulta nombra solo el esquema propio | 201 |
 | `test_security_cross_tenant.py` | Ids de otra empresa en rutas, cuerpos y filtros | 34 |
-| `test_security_analytics.py` | Agregados sin datos ajenos, fechas inválidas | 39 |
+| `test_security_analytics.py` | Agregados sin datos ajenos, fechas inválidas | 59 |
 | `test_security_error_handling.py` | Errores sin detalles internos | 22 |
+
+La prueba de IA usa un proveedor desconectado: ninguna prueba de seguridad llega al
+proveedor externo, aunque la máquina tenga `ZAI_API_KEY` configurada.
 
 ## Validación final
 
-**Suite completa.** 1915 pruebas en verde, contra 656 en `main`: 1259 nuevas de
-seguridad. Corre en unos 13 segundos, porque la semilla de pruebas ahora calcula el
+**Suite completa.** 1915 pruebas en verde al cerrar la revisión, contra 656 en
+`main`: 1259 nuevas de seguridad. Después de integrar el PR #32 y la corrección
+pedida en la revisión del PR, 2232. Corre en unos 13 segundos, porque la semilla de pruebas ahora calcula el
 hash bcrypt una sola vez por sesión en lugar de cinco veces por prueba.
 
 **Ejecución en vivo.** Un PostgreSQL 16 descartable en un puerto propio, dos copias
