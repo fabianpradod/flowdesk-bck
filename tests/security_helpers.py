@@ -19,6 +19,7 @@ PUBLIC = "public"
 AUTHENTICATED = "authenticated"
 OWNER = "owner"
 MANAGER = "manager"
+MANAGER_STRICT = "manager_strict"
 ADMIN = "admin"
 SUPERADMIN_STRICT = "superadmin_strict"
 
@@ -31,6 +32,7 @@ ALLOWED_ROLES = {
     AUTHENTICATED: set(ROLES),
     OWNER: set(ROLES),
     MANAGER: {"manager", "admin", "superadmin"},
+    MANAGER_STRICT: {"manager", "admin"},
     ADMIN: {"admin", "superadmin"},
     SUPERADMIN_STRICT: {"superadmin"},
 }
@@ -89,12 +91,17 @@ ROUTE_POLICY = {
     ("GET", "/api/v1/commercial/tax-configuration"): AUTHENTICATED,
     ("PUT", "/api/v1/commercial/tax-configuration"): ADMIN,
     # analytics and ai analysis
-    ("GET", "/api/v1/analytics/sales/metrics"): MANAGER,
-    ("GET", "/api/v1/analytics/sales/trend"): MANAGER,
-    ("GET", "/api/v1/analytics/sales/top-products"): MANAGER,
-    ("GET", "/api/v1/analytics/inventory/risk-distribution"): MANAGER,
-    ("GET", "/api/v1/analytics/catalog/product-creation-trend"): MANAGER,
-    ("POST", "/api/v1/ai/analysis"): MANAGER,
+    ("GET", "/api/v1/analytics/sales/metrics"): MANAGER_STRICT,
+    ("GET", "/api/v1/analytics/sales/trend"): MANAGER_STRICT,
+    ("GET", "/api/v1/analytics/sales/top-products"): MANAGER_STRICT,
+    ("GET", "/api/v1/analytics/inventory/risk-distribution"): MANAGER_STRICT,
+    ("GET", "/api/v1/analytics/catalog/product-creation-trend"): MANAGER_STRICT,
+    ("POST", "/api/v1/ai/analysis"): MANAGER_STRICT,
+    # Private chat/history retain manager/admin-only access and owner scoping.
+    ("POST", "/api/v1/ai/chat"): MANAGER_STRICT,
+    ("GET", "/api/v1/ai/conversations"): MANAGER_STRICT,
+    ("GET", "/api/v1/ai/conversations/{conversation_id}"): MANAGER_STRICT,
+    ("DELETE", "/api/v1/ai/conversations/{conversation_id}"): MANAGER_STRICT,
     # reports
     ("GET", "/api/v1/reports/history"): ADMIN,
     ("GET", "/api/v1/reports/inventario"): ADMIN,
@@ -115,6 +122,7 @@ EXPECTED_GUARD = {
     AUTHENTICATED: ("require_role", (), False),
     OWNER: ("get_current_user",),
     MANAGER: ("require_role", ("manager",), False),
+    MANAGER_STRICT: ("require_role", ("manager", "admin"), True),
     ADMIN: ("require_role", ("admin",), False),
     SUPERADMIN_STRICT: ("require_role", ("superadmin",), True),
 }
@@ -135,20 +143,25 @@ def protected_routes(policy=ROUTE_POLICY):
 
 
 def route_guard(route: APIRoute):
-    """Describe the auth dependency declared directly on a route.
+    """Find the outermost auth guard, including the chat actor wrapper.
 
-    require_role returns a closure, so its arguments are read from the closure
-    cells. Nested dependencies are ignored on purpose: the checker itself depends
-    on get_current_user, and only the outermost guard says what the route allows.
+    Stop at a role checker rather than descending into its get_current_user
+    dependency, which would lose the role restriction.
     """
-    for dependency in route.dependant.dependencies:
-        call = dependency.call
-        if getattr(call, "__qualname__", "") == "require_role.<locals>.checker":
-            cells = dict(zip(call.__code__.co_freevars, call.__closure__ or ()))
-            return ("require_role", cells["roles"].cell_contents, cells["strict"].cell_contents)
-        if call is get_current_user:
-            return ("get_current_user",)
-    return None
+    def find_guard(dependant):
+        for dependency in dependant.dependencies:
+            call = dependency.call
+            if getattr(call, "__qualname__", "") == "require_role.<locals>.checker":
+                cells = dict(zip(call.__code__.co_freevars, call.__closure__ or ()))
+                return ("require_role", cells["roles"].cell_contents, cells["strict"].cell_contents)
+            if call is get_current_user:
+                return ("get_current_user",)
+        for dependency in dependant.dependencies:
+            guard = find_guard(dependency)
+            if guard is not None:
+                return guard
+        return None
+    return find_guard(route.dependant)
 
 
 def fill_path(path: str, value) -> str:
@@ -167,6 +180,7 @@ GUARD_REFUSAL = "Insufficient permissions"
 class FakeResult:
     def __init__(self, rows=()):
         self.rows = list(rows)
+        self.rowcount = 0
 
     def mappings(self):
         return self
@@ -252,6 +266,9 @@ class RecordingDB:
     def rollback(self):
         pass
 
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
     def connection(self):
         return None
 
@@ -298,7 +315,16 @@ class OfflineAnalysisProvider:
         raise RuntimeError("the AI provider is not reachable from the test suite")
 
 
+class OfflineChatProvider:
+    name = "offline-chat"
+
+    async def complete(self, **_kwargs):
+        raise RuntimeError("the chat provider is not reachable from the test suite")
+
+
 def _keep_ai_offline(app):
+    from app.api.dependencies.ai import get_chat_provider
+    app.dependency_overrides[get_chat_provider] = OfflineChatProvider
     from app.services.intelligence import get_analysis_provider
 
     app.dependency_overrides[get_analysis_provider] = OfflineAnalysisProvider
@@ -386,6 +412,7 @@ def request_kwargs(key, ref=None) -> dict:
         ("PATCH", "/api/v1/tasks/{task_id}/status"): {"estado": "completada"},
         ("PUT", "/api/v1/commercial/tax-configuration"): {"tasa_impuesto": "12"},
         ("POST", "/api/v1/ai/analysis"): {"scope": "inventory"},
+        ("POST", "/api/v1/ai/chat"): {"message": "Sales?", "conversation_id": ref},
         ("POST", "/api/v1/auth/register"): {
             "name": "Otra", "admin_email": "otra@test.com", "admin_username": "otra_admin",
         },

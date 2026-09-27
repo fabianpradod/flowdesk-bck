@@ -9,6 +9,7 @@ import pytest
 
 from tests.security_helpers import (
     ALLOWED_ROLES,
+    MANAGER_STRICT,
     ROLES,
     ROUTE_POLICY,
     call,
@@ -46,13 +47,15 @@ def test_allowed_role_passes_the_guard(case):
     assert not refused_by_guard(response), response.text
 
 
-def test_the_matrix_admits_every_role_somewhere_and_superadmin_everywhere():
+def test_the_matrix_admits_every_role_and_preserves_strict_manager_exceptions():
     """Guards against a policy table that silently locks a role out."""
     reachable = {role for _key, role in ALLOWED}
 
     assert reachable == set(ROLES)
     assert all(
-        "superadmin" in ALLOWED_ROLES[ROUTE_POLICY[key]] for key in protected_routes()
+        ("superadmin" in ALLOWED_ROLES[ROUTE_POLICY[key]])
+        == (ROUTE_POLICY[key] != MANAGER_STRICT)
+        for key in protected_routes()
     )
 
 

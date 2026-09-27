@@ -14,3 +14,5 @@ tests
 postman
 *.log
 .DS_Store
+
+.idea/

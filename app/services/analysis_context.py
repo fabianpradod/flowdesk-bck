@@ -113,6 +113,13 @@ def build_business_context(
             "points": trend["points"][-MAX_TREND_POINTS:],
         }
         context["top_selling_products"] = top_products["products"][:MAX_RISK_PRODUCTS]
+        if request.product_id is not None or request.supplier_id is not None:
+            context["data_limitations"].append(
+                "Filtered sales include only matching sale lines. Invoice discounts and taxes "
+                "are allocated by their share of the invoice subtotal and rounded per invoice; "
+                "zero-subtotal invoices have no allocated charges. Product rankings use line "
+                "subtotals before these allocations."
+            )
 
     if include_catalog:
         creation = analytics_service.get_product_creation_trend(

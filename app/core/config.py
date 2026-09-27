@@ -47,5 +47,7 @@ ZAI_API_KEY: str | None = os.getenv("ZAI_API_KEY")
 ZAI_MODEL: str = os.getenv("ZAI_MODEL", "glm-5.3-flash")
 ZAI_BASE_URL: str = os.getenv("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4")
 ZAI_TIMEOUT_SECONDS: float = float(os.getenv("ZAI_TIMEOUT_SECONDS", "30"))
+# Validated lazily by the chat dependency so a typo only disables chat.
+ZAI_CHAT_MAX_TOKENS: str = os.getenv("ZAI_CHAT_MAX_TOKENS", "4096")
 DEMO_SEED_ENABLED: bool = os.getenv("DEMO_SEED_ENABLED", "false").lower() in {"1", "true", "yes"}
 DEMO_USER_PASSWORD: str = os.getenv("DEMO_USER_PASSWORD", "Demo12345!")

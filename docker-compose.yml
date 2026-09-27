@@ -19,6 +19,7 @@ services:
 
   api:
     build: .
+    image: flowdesk-api:local
     container_name: flowdesk-api
     restart: always
     env_file:
@@ -30,6 +31,25 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  chat_cleanup:
+    image: flowdesk-api:local
+    restart: always
+    command: ["python", "-m", "app.services.chat_maintenance", "--watch"]
+    env_file:
+      - .env
+    environment:
+      DB_SERVER: db
+    depends_on:
+      api:
+        condition: service_started
     read_only: true
     tmpfs:
       - /tmp

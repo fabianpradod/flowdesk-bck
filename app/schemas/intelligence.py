@@ -41,27 +41,27 @@ class IntelligentAnalysisRequest(BaseModel):
             raise ValueError(
                 "client_id and customer_type filters require a sales or business analysis"
             )
-        
+
         if self.customer_type == "final_consumer" and self.client_id is not None:
             raise ValueError(
                 "client_id cannot be combined with final_consumer customer_type"
             )
-        
+
         if self.period == "custom":
             if self.start_date is None or self.end_date is None:
                 raise ValueError(
                     "custom period requires both start_date and end_date"
                 )
-            
+
         elif self.start_date is not None or self.end_date is not None:
             raise ValueError(
                 "start_date and end_date are only valid with period=custom"
             )
-        
+
         if self.start_date is not None and self.end_date is not None:
             if self.start_date > self.end_date:
                 raise ValueError("start_date must be before or equal to end_date")
-        
+
         return self
 
 class AnalysisInsight(BaseModel):

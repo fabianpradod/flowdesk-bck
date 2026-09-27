@@ -2,7 +2,7 @@ from datetime import date
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from app.api.dependencies.auth import get_db, require_role
+from app.api.dependencies.auth import require_role, get_db
 from app.models.users import User
 from app.schemas.analytics import InventoryRiskDistributionResponse, ProductCreationTrendResponse, SalesCustomerType, SalesMetricsResponse, SalesTrendResponse, TopSellingProductsResponse
 from app.schemas.inventory import AnalyticsPeriod, AnalyticsWindow
@@ -20,10 +20,12 @@ def sales_metrics(
     period: AnalyticsPeriod = Query(default="30d"),
     customer_type: SalesCustomerType = Query(default="all"),
     client_id: UUID | None = Query(default=None),
+    product_id: UUID | None = Query(default=None),
+    supplier_id: UUID | None = Query(default=None),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("manager", "admin", strict=True)),
 ):
     return analytics_service.get_sales_metrics(
         current_user,
@@ -31,6 +33,8 @@ def sales_metrics(
         period=period,
         customer_type=customer_type,
         client_id=client_id,
+        product_id=product_id,
+        supplier_id=supplier_id,
         start_date=start_date,
         end_date=end_date,
     )
@@ -46,10 +50,12 @@ def sales_trend(
     window: AnalyticsWindow = Query(default="day"),
     customer_type: SalesCustomerType = Query(default="all"),
     client_id: UUID | None = Query(default=None),
+    product_id: UUID | None = Query(default=None),
+    supplier_id: UUID | None = Query(default=None),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("manager", "admin", strict=True)),
 ):
     return analytics_service.get_sales_trend(
         current_user,
@@ -58,6 +64,8 @@ def sales_trend(
         window=window,
         customer_type=customer_type,
         client_id=client_id,
+        product_id=product_id,
+        supplier_id=supplier_id,
         start_date=start_date,
         end_date=end_date,
     )
@@ -74,7 +82,7 @@ def inventory_risk_distribution(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("manager", "admin", strict=True)),
 ):
     return analytics_service.get_inventory_risk_distribution(
         current_user,
@@ -104,7 +112,7 @@ def top_selling_products(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("manager", "admin", strict=True)),
 ):
     return analytics_service.get_top_selling_products(
         current_user,
@@ -136,7 +144,7 @@ def product_creation_trend(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role("manager")),
+    current_user: User = Depends(require_role("manager", "admin", strict=True)),
 ):
     return analytics_service.get_product_creation_trend(
         current_user,

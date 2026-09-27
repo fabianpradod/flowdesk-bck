@@ -80,11 +80,13 @@ def test_the_schema_claims_in_the_token_are_ignored(key):
 
 @pytest.mark.parametrize("key", TENANT_ROUTES, ids=_route_id)
 def test_a_user_without_a_company_never_reaches_tenant_data(key):
-    """The seeded superadmin has no company: it passes every role guard, but no
-    tenant schema can be resolved for it."""
+    """An otherwise allowed role still needs a company, independently of its guard."""
     db = RecordingDB()
+    user = make_user(_lowest_allowed_role(key))
+    user.company_id = None
+    user.company = None
 
-    response = call(client_for(make_user("superadmin"), db), key, **request_kwargs(key))
+    response = call(client_for(user, db), key, **request_kwargs(key))
 
     assert response.status_code == 403
     assert response.json()["message"] == "This user is not assigned to a tenant company"

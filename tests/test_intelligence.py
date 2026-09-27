@@ -254,6 +254,39 @@ def test_openapi_includes_intelligent_analysis_endpoint():
     assert "200" in operation["responses"]
     assert "503" in operation["responses"]
 
+@pytest.mark.parametrize("role,expected", [("employee", 403), ("superadmin", 403), ("manager", 200), ("admin", 200)])
+def test_analysis_role_policy_matches_chat(admin_client, analysis_data, role, expected):
+    from types import SimpleNamespace
+    from app.api.dependencies.auth import get_current_user
+    user = app.dependency_overrides[get_current_user]()
+    user = SimpleNamespace(id=user.id, company_id=user.company_id, company=user.company,
+                           is_active=True, role=SimpleNamespace(name=role))
+    app.dependency_overrides[get_current_user] = lambda: user
+    provider = FakeProvider()
+    app.dependency_overrides[intelligence_service.get_analysis_provider] = lambda: provider
+    response = admin_client.post("/api/v1/ai/analysis", json={})
+    assert response.status_code == expected
+    assert (provider.context is not None) == (expected == 200)
+
+
+@pytest.mark.parametrize("body,field", [
+    ({"question": "   \t "}, "question"),
+    ({"scope": "sales", "client_id": str(uuid4()), "customer_type": "final_consumer"}, None),
+])
+def test_analysis_validator_errors_return_serializable_422(admin_client, body, field):
+    from fastapi.testclient import TestClient
+    provider = FakeProvider()
+    app.dependency_overrides[intelligence_service.get_analysis_provider] = lambda: provider
+    response = TestClient(app, raise_server_exceptions=False).post("/api/v1/ai/analysis", json=body)
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["code"] == "validation_error"
+    assert payload["errors"][0]["loc"] == (["body", field] if field else ["body"])
+    assert payload["errors"][0]["type"] == "value_error"
+    assert "ctx" not in payload["errors"][0]
+    assert provider.context is None
+
+
 def test_intelligence_endpoint_requires_manager_role(client, employee_client):
     response = employee_client.post("/api/v1/ai/analysis", json={})
     assert response.status_code == 403

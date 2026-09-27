@@ -417,12 +417,12 @@ def update_tax_configuration(data: TaxConfigurationUpdate, current_user, db: Ses
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
-        
+
         raise AppError(
             status_code=500,
             message="Database error while updating tax configuration",
         ) from exc
-    
+
     return {"tasa_impuesto": rate}
 
 def list_client_purchases(
@@ -551,7 +551,7 @@ def _get_tax_rate(db: Session, configuration) -> Decimal:
         .order_by(configuration.c.updated_at.desc(), configuration.c.created_at.desc())
         .limit(1)
     ).mappings().first()
-    
+
     if row is None:
         return Decimal("0")
     return _decimal(row["tasa_impuesto"])

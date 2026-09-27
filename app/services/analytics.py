@@ -351,68 +351,17 @@ def _fetch_final_sales(
     _validate_sales_customer_filters(customer_type, client_id)
     tables = _analytics_tables(current_user)
     sales = tables["venta"]
-    details = tables["detalle_venta"]
-    products = tables["producto"]
-
-    base_filters = [
+    query = select(
+        sales.c.fecha,
+        sales.c.subtotal,
+        sales.c.descuento,
+        sales.c.impuesto,
+        sales.c.total,
+        sales.c.cliente_id,
+    ).where(
         sales.c.fecha >= analytics_range["start"],
         sales.c.fecha <= analytics_range["end"],
         func.lower(sales.c.estado).in_(FINAL_SALE_STATES),
-    ]
-
-    if product_id is None:
-        query = select(
-            sales.c.fecha,
-            sales.c.subtotal,
-            sales.c.descuento,
-            sales.c.impuesto,
-            sales.c.total,
-            sales.c.cliente_id,
-        ).where(*base_filters)
-
-        if client_id is not None:
-            query = query.where(sales.c.cliente_id == client_id)
-        elif customer_type == "registered":
-            query = query.where(sales.c.cliente_id.is_not(None))
-        elif customer_type == "final_consumer":
-            query = query.where(sales.c.cliente_id.is_(None))
-        if supplier_id is not None:
-            query = query.select_from(
-                sales.join(details, details.c.venta_id == sales.c.id).join(
-                    products, products.c.id == details.c.producto_id
-                )
-            ).where(products.c.proveedor_id == supplier_id).distinct()
-
-        return [
-            dict(row)
-            for row in db.execute(query.order_by(sales.c.fecha.asc())).mappings()
-        ]
-
-    line_subtotal = func.sum(details.c.subtotal)
-    query = (
-        select(
-            sales.c.id.label("sale_id"),
-            sales.c.fecha,
-            sales.c.subtotal.label("sale_subtotal"),
-            sales.c.descuento.label("sale_discount"),
-            sales.c.impuesto.label("sale_tax"),
-            sales.c.cliente_id,
-            line_subtotal.label("filtered_subtotal"),
-        )
-        .select_from(
-            sales.join(details, details.c.venta_id == sales.c.id)
-            .join(products, products.c.id == details.c.producto_id)
-        )
-        .where(*base_filters)
-        .where(details.c.producto_id == product_id)
-        .group_by(
-            sales.c.id,
-            sales.c.fecha,
-            sales.c.subtotal,
-            sales.c.descuento,
-            sales.c.impuesto,
-            sales.c.cliente_id,
-        )
     )
     if client_id is not None:
         query = query.where(sales.c.cliente_id == client_id)
@@ -420,32 +369,33 @@ def _fetch_final_sales(
         query = query.where(sales.c.cliente_id.is_not(None))
     elif customer_type == "final_consumer":
         query = query.where(sales.c.cliente_id.is_(None))
-    if supplier_id is not None:
-        query = query.where(products.c.proveedor_id == supplier_id)
-
-    rows = []
-    for row in db.execute(query.order_by(sales.c.fecha.asc())).mappings():
-        row = dict(row)
-        sale_subtotal = _decimal(row["sale_subtotal"])
-        filtered_subtotal = _decimal(row["filtered_subtotal"])
-        ratio = (
-            filtered_subtotal / sale_subtotal
-            if sale_subtotal
-            else Decimal("0")
-        )
-        discount = _money(_decimal(row["sale_discount"]) * ratio)
-        tax = _money(_decimal(row["sale_tax"]) * ratio)
-        filtered_total = _money(filtered_subtotal - discount + tax)
-        rows.append(
-            {
-                "fecha": row["fecha"],
-                "subtotal": filtered_subtotal,
-                "descuento": discount,
-                "impuesto": tax,
-                "total": filtered_total,
-                "cliente_id": row["cliente_id"],
-            }
-        )
+    if product_id is not None or supplier_id is not None:
+        details, products = tables["detalle_venta"], tables["producto"]
+        # One row per sale prevents multiple matching lines from multiplying
+        # invoice counts or invoice-level discount/tax amounts.
+        selected = select(
+            details.c.venta_id,
+            func.sum(details.c.subtotal).label("selected_subtotal"),
+        ).select_from(details.join(products, products.c.id == details.c.producto_id))
+        if product_id is not None:
+            selected = selected.where(products.c.id == product_id)
+        if supplier_id is not None:
+            selected = selected.where(products.c.proveedor_id == supplier_id)
+        selected = selected.group_by(details.c.venta_id).subquery()
+        query = query.join(selected, selected.c.venta_id == sales.c.id).add_columns(selected.c.selected_subtotal)
+    query = query.order_by(sales.c.fecha.asc())
+    rows = [dict(row) for row in db.execute(query).mappings()]
+    if product_id is not None or supplier_id is not None:
+        for row in rows:
+            subtotal = _decimal(row.pop("selected_subtotal"))
+            invoice_subtotal = _decimal(row["subtotal"])
+            # A zero-value invoice has no monetary basis for allocating global
+            # charges; selected zero-value lines therefore receive zero charges.
+            fraction = subtotal / invoice_subtotal if invoice_subtotal > 0 else Decimal("0")
+            row["subtotal"] = subtotal
+            row["descuento"] = _money(_decimal(row["descuento"]) * fraction)
+            row["impuesto"] = _money(_decimal(row["impuesto"]) * fraction)
+            row["total"] = subtotal - row["descuento"] + row["impuesto"]
     return rows
 
 def _validate_sales_customer_filters(

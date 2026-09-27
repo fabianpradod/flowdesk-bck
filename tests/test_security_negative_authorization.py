@@ -23,6 +23,7 @@ from tests.security_helpers import (
     ALLOWED_ROLES,
     GUARD_REFUSAL,
     MANAGER,
+    MANAGER_STRICT,
     ROLES,
     ROUTE_POLICY,
     SUPERADMIN_STRICT,
@@ -42,7 +43,7 @@ REFUSED = [
 ]
 
 ROLE_RESTRICTED = [
-    key for key in protected_routes() if ROUTE_POLICY[key] in {MANAGER, ADMIN, SUPERADMIN_STRICT}
+    key for key in protected_routes() if ROUTE_POLICY[key] in {MANAGER, MANAGER_STRICT, ADMIN, SUPERADMIN_STRICT}
 ]
 
 
@@ -77,8 +78,8 @@ def test_a_user_without_a_role_is_refused_on_role_restricted_routes(key):
     assert not db.touched
 
 
-def test_every_role_but_superadmin_is_refused_somewhere():
-    assert {role for _key, role in REFUSED} == {"employee", "manager", "admin"}
+def test_every_role_is_refused_somewhere_including_strict_analytics_guards():
+    assert {role for _key, role in REFUSED} == set(ROLES)
 
 
 # Escalation through the user administration endpoints

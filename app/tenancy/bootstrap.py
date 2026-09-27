@@ -44,7 +44,7 @@ def _migrate_existing_tenant_schema(connection, schema_name: str) -> None:
     for table_name, columns in required_columns.items():
         existing = {
             column["name"]
-            
+
             for column in inspector.get_columns(table_name, schema=schema_name)
         }
 

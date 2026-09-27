@@ -86,6 +86,8 @@ def test_build_tenant_metadata_contains_expected_tables():
         "configuracion_tributaria",
         "tarea",
         "reporte",
+        "chat_conversation",
+        "chat_message",
     }
     tenant_models = {
         Proveedor,

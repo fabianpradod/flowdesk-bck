@@ -1,5 +1,12 @@
 # Flowdesk Backend
 
+El Chatbot del Sprint 8 está documentado en
+[el contrato de chat](docs/ai-chat-contract.md) y
+[el plan acordado](docs/plans/sprint8-ai-chat.md). Incluye herramientas de consulta,
+chat e historial privado para managers/admins, con caducidad de 15 días desde el
+último mensaje. Ver [pruebas y despliegue](docs/ai-chat-qa.md); la validación con
+el modelo real sigue pendiente del saldo de Z.AI.
+
 API REST multi-tenant construida con FastAPI, PostgreSQL y SQLAlchemy para
 inventario, usuarios, clientes y tareas.
 
@@ -119,8 +126,9 @@ válida, es decir también `employee`.
 | `DELETE /api/v1/inventory/suppliers/{id}` | `admin` |
 | `GET /api/v1/commercial/clients`, `/clients/{id}` | Autenticado |
 | `GET /api/v1/commercial/sales/{id}`, `/clients/{id}/purchases` | Autenticado |
-| `GET /api/v1/analytics/*` | `manager` |
-| `POST /api/v1/ai/analysis` | `manager` |
+| `GET /api/v1/analytics/*` | `manager` o `admin` estricto |
+| `POST /api/v1/ai/analysis` | `manager` o `admin` estricto |
+| `POST /api/v1/ai/chat`, `GET /api/v1/ai/conversations`, `GET/DELETE /api/v1/ai/conversations/{id}` | `manager` o `admin` estricto; conversaciones propias |
 | `POST /api/v1/commercial/clients`, `/sales` | `manager` |
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
@@ -310,3 +318,29 @@ llamada real con la clave del `.env`, ejecutar explícitamente:
 $env:RUN_ZAI_INTEGRATION_TEST="1"
 python -m pytest tests/test_zai.py -k live -v
 ```
+
+
+### Permisos y filtros del análisis de ventas
+
+`/api/v1/analytics/*` y `/api/v1/ai/analysis` requieren el rol exacto `manager` o
+`admin`, igual que el chat, y consultan únicamente la empresa activa del usuario.
+Las métricas y tendencias de ventas aceptan `product_id` y `supplier_id`; cuando
+se proporcionan ambos, se aplica su intersección. El análisis usa los mismos
+filtros en métricas, tendencias y ranking.
+
+Con estos filtros se suman únicamente los subtotales de las líneas seleccionadas
+y se cuenta cada venta coincidente una sola vez. Los descuentos e impuestos de la
+venta se prorratean según `subtotal seleccionado / subtotal de la venta`, con
+redondeo a centavos por venta (Decimal, mitad al par). Las ventas netas filtradas
+son subtotal seleccionado menos descuento asignado más impuesto asignado; el
+ticket promedio usa ese importe y el número de ventas coincidentes. Sin filtros,
+se conservan los importes completos registrados en la venta. Una venta con
+subtotal cero no tiene base monetaria de reparto y recibe cargos asignados cero.
+El ranking muestra subtotales de líneas antes del prorrateo, y el contexto enviado
+al proveedor explica esta diferencia. Consultas separadas pueden diferir por un
+centavo al recombinar asignaciones redondeadas.
+
+Los errores de validación HTTP mantienen `message`, `code` y `errors`; cada error
+incluye `type`, `loc` y `msg`. No se devuelven objetos de excepción ni la entrada
+original. Los validadores de preguntas vacías y filtros incompatibles siguen
+activos y responden 422.
