@@ -6,36 +6,25 @@ matters is that the role guard let the request through.
 """
 
 import pytest
-
-from tests.security_helpers import (
-    ALLOWED_ROLES,
-    MANAGER_STRICT,
-    ROLES,
-    ROUTE_POLICY,
-    call,
-    client_for,
-    make_user,
-    protected_routes,
-    refused_by_guard,
-)
-
+from tests.security_helpers import ALLOWED_ROLES, MANAGER_STRICT, ROLES, ROUTE_POLICY, call, client_for, make_user, protected_routes, refused_by_guard
+from tests.security_helpers import call, client_for, make_user, refused_by_guard
 
 def _cases(allowed: bool):
     return [
         (key, role)
+
         for key in protected_routes()
         for role in ROLES
+
         if (role in ALLOWED_ROLES[ROUTE_POLICY[key]]) is allowed
     ]
 
-
 def _case_id(case):
     (method, path), role = case
+
     return f"{role} {method} {path}"
 
-
 ALLOWED = _cases(allowed=True)
-
 
 @pytest.mark.parametrize("case", ALLOWED, ids=[_case_id(case) for case in ALLOWED])
 def test_allowed_role_passes_the_guard(case):
@@ -45,7 +34,6 @@ def test_allowed_role_passes_the_guard(case):
 
     assert response.status_code != 401, response.text
     assert not refused_by_guard(response), response.text
-
 
 def test_the_matrix_admits_every_role_and_preserves_strict_manager_exceptions():
     """Guards against a policy table that silently locks a role out."""
@@ -58,7 +46,6 @@ def test_the_matrix_admits_every_role_and_preserves_strict_manager_exceptions():
         for key in protected_routes()
     )
 
-
 @pytest.mark.parametrize("role", ["manager", "admin"])
 def test_a_superadmin_only_route_is_not_reachable_through_the_hierarchy(role):
     """The one place where the hierarchy is switched off on purpose."""
@@ -67,3 +54,26 @@ def test_a_superadmin_only_route_is_not_reachable_through_the_hierarchy(role):
     assert strict
     for key in strict:
         assert refused_by_guard(call(client_for(make_user(role)), key)), key
+
+@pytest.mark.parametrize("role", ["manager", "admin"])
+def test_chatbot_is_reachable_only_by_manager_or_admin_roles(role):
+    """Sprint authorization contract: the chatbot is not an employee feature."""
+    from tests.security_helpers import call, client_for, make_user
+
+    response = call(
+        client_for(make_user(role)),
+        ("POST", "/api/v1/ai/chat"),
+        json={"message": "Ventas?"},
+    )
+
+    assert response.status_code != 403
+
+@pytest.mark.parametrize("role", ["employee", "superadmin"])
+def test_chatbot_denies_roles_outside_manager_admin_scope(role):
+    response = call(
+        client_for(make_user(role)),
+        ("POST", "/api/v1/ai/chat"),
+        json={"message": "Ventas?"},
+    )
+
+    assert refused_by_guard(response)

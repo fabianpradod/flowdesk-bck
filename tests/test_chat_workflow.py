@@ -192,7 +192,6 @@ def test_expiry_reads_do_not_extend_retention_and_cleanup_cascades(database):
         store.load(expired)
     assert error.value.status_code == 404
     database.db.rollback()
-    # Inactive companies still get retention cleanup.
     with database.engine.begin() as connection:
         connection.execute(update(Company).where(Company.id == database.company_ids[0]).values(is_active=False))
     assert maintain_chat(database.engine) == 1
@@ -410,6 +409,35 @@ def test_api_rejects_client_context_injection_and_returns_safe_error(api):
     assert response.status_code == 503
     assert response.json()["code"] == "ai_provider_quota_exhausted"
 
+@pytest.mark.parametrize(
+    ("provider_failure", "expected_status", "expected_code"),
+    [
+        (AppError(502, "Upstream failed", "ai_provider_error"), 502, "ai_provider_error"),
+        (TimeoutError(), 504, "ai_timeout"),
+    ],
+)
+def test_api_chat_sanitizes_mocked_provider_failures(api, provider_failure, expected_status, expected_code):
+    """The HTTP endpoint must expose the public error contract, not provider internals."""
+    _, _, provider = api
+    provider.steps = [provider_failure]
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post("/api/v1/ai/chat", json={"message": "Ventas?"})
+
+    assert response.status_code == expected_status
+    payload = response.json()
+    assert payload["code"] == expected_code
+    assert "Upstream failed" not in payload["message"]
+
+def test_api_chat_rejects_blank_message_before_calling_mocked_provider(api):
+    """Request validation happens before the LLM boundary and never invokes the provider."""
+    client, _, provider = api
+
+    response = client.post("/api/v1/ai/chat", json={"message": "   "})
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"
+    assert provider.requests == []
 
 def test_history_routes_work_without_provider_configuration(api):
     client, _, provider = api
