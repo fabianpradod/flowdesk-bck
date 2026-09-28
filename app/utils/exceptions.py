@@ -15,7 +15,10 @@ class ProductImportError(AppError):
 def build_error_payload(error: Exception) -> dict:
     detail = getattr(error, "detail", None)
 
-    if isinstance(detail, str):
+    if getattr(error, "code", None) == "ai_provider_error":
+        message = "The chat provider could not complete the request"
+    
+    elif isinstance(detail, str):
         message = detail
     else:
         message = getattr(error, "message", "Request failed")
