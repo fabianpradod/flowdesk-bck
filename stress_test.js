@@ -14,8 +14,10 @@ export let options = {
 };
 
 export default function () {
-    let res = http.get('http://api:8000/health');
+    let res = http.get('http://127.0.0.1/health');
     check(res, {
         'status is 200': (r) => r.status === 200,
     });
 }
+
+
