@@ -25,6 +25,17 @@ class SalesMetricsResponse(BaseModel):
     registered_customer_sales: int
     final_consumer_sales: int
 
+class FiscalDebitResponse(BaseModel):
+    period: AnalyticsPeriod
+    start_date: date
+    end_date: date
+    sales_count: int
+    taxable_sales_count: int
+    exempt_sales_count: int
+    taxable_subtotal: Decimal
+    exempt_subtotal: Decimal
+    fiscal_debit: Decimal
+
 class SalesTrendPoint(BaseModel):
     period_start: date
     period_label: str
