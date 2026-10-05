@@ -92,6 +92,7 @@ ROUTE_POLICY = {
     ("PUT", "/api/v1/commercial/tax-configuration"): ADMIN,
     # analytics and ai analysis
     ("GET", "/api/v1/analytics/sales/metrics"): MANAGER_STRICT,
+    ("GET", "/api/v1/analytics/sales/fiscal-debit"): MANAGER_STRICT,
     ("GET", "/api/v1/analytics/sales/trend"): MANAGER_STRICT,
     ("GET", "/api/v1/analytics/sales/top-products"): MANAGER_STRICT,
     ("GET", "/api/v1/analytics/inventory/risk-distribution"): MANAGER_STRICT,

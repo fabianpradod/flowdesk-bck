@@ -12,6 +12,7 @@ from app.utils.exceptions import AppError
 
 MONEY_QUANTUM = Decimal("0.01")
 MAX_TAX_RATE = Decimal("100")
+DEFAULT_TAX_RATE = Decimal("0.00")
 
 def list_clients(
     current_user,
@@ -553,5 +554,8 @@ def _get_tax_rate(db: Session, configuration) -> Decimal:
     ).mappings().first()
 
     if row is None:
-        return Decimal("0")
+        # A missing legacy configuration is intentionally equivalent to the
+        # documented, valid 0% default. It must not affect other tenants or
+        # rewrite the tax snapshot stored on historical sales.
+        return DEFAULT_TAX_RATE
     return _decimal(row["tasa_impuesto"])
