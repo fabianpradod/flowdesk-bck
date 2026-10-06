@@ -257,6 +257,7 @@ def test_product_creation_trend_groups_status_by_week(analytics_db):
     "path",
     [
         "/api/v1/analytics/sales/metrics",
+        "/api/v1/analytics/sales/fiscal-debit",
         "/api/v1/analytics/sales/trend",
         "/api/v1/analytics/inventory/risk-distribution",
         "/api/v1/analytics/sales/top-products",
@@ -304,6 +305,39 @@ def test_sales_metrics_endpoint_forwards_filters(admin_client, monkeypatch):
     assert captured["client_id"] == client_id
     assert captured["start_date"].isoformat() == "2026-08-01"
     assert response.json()["average_ticket"] == "52.50"
+
+def test_fiscal_debit_endpoint_forwards_period_and_serializes_result(admin_client, monkeypatch):
+    captured = {}
+
+    def fake_fiscal_debit(_user, _db, **filters):
+        captured.update(filters)
+        return {
+            "period": "custom",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-31",
+            "sales_count": 2,
+            "taxable_sales_count": 1,
+            "exempt_sales_count": 1,
+            "taxable_subtotal": "100.00",
+            "exempt_subtotal": "50.00",
+            "fiscal_debit": "12.00",
+        }
+
+    monkeypatch.setattr(analytics_service, "get_fiscal_debit", fake_fiscal_debit)
+    response = admin_client.get(
+        "/api/v1/analytics/sales/fiscal-debit",
+        params={
+            "period": "custom",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-31",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["period"] == "custom"
+    assert captured["start_date"].isoformat() == "2026-08-01"
+    assert captured["end_date"].isoformat() == "2026-08-31"
+    assert response.json()["fiscal_debit"] == "12.00"
 
 def test_sales_trend_endpoint_returns_points(admin_client, monkeypatch):
     def fake_trend(_user, _db, **filters):
@@ -410,6 +444,7 @@ def test_sales_trend_and_risk_distribution_are_in_openapi():
     paths = app.openapi()["paths"]
 
     assert "/api/v1/analytics/sales/metrics" in paths
+    assert "/api/v1/analytics/sales/fiscal-debit" in paths
     assert "/api/v1/analytics/sales/trend" in paths
     assert "/api/v1/analytics/inventory/risk-distribution" in paths
     assert "/api/v1/analytics/sales/top-products" in paths
@@ -419,6 +454,7 @@ def test_sales_trend_and_risk_distribution_are_in_openapi():
     ("path", "params"),
     [
         ("/api/v1/analytics/sales/metrics", {"customer_type": "unknown"}),
+        ("/api/v1/analytics/sales/fiscal-debit", {"period": "invalid"}),
         ("/api/v1/analytics/sales/trend", {"window": "year"}),
         ("/api/v1/analytics/inventory/risk-distribution", {"period": "invalid"}),
         ("/api/v1/analytics/sales/top-products", {"limit": 0}),
@@ -434,6 +470,14 @@ def test_new_analytics_endpoints_validate_filters(admin_client, path, params):
 def test_custom_period_requires_both_dates(admin_client):
     response = admin_client.get(
         "/api/v1/analytics/sales/metrics",
+        params={"period": "custom", "start_date": "2026-08-01"},
+    )
+
+    assert response.status_code == 400
+
+def test_fiscal_debit_custom_period_requires_both_dates(admin_client):
+    response = admin_client.get(
+        "/api/v1/analytics/sales/fiscal-debit",
         params={"period": "custom", "start_date": "2026-08-01"},
     )
 
@@ -467,7 +511,6 @@ def test_analytics_role_policy_matches_chat(admin_client, monkeypatch, path, ser
     response = admin_client.get(f"/api/v1/analytics/{path}")
     assert response.status_code == expected
     assert bool(calls) == (expected == 200)
-
 
 @pytest.mark.parametrize("filter_by", ["product", "supplier", "both", "mismatch", "missing"])
 @pytest.mark.parametrize("discount,tax,expected_net", [(0, 0, "10.00"), (20, 10, "9.00")])
@@ -515,7 +558,6 @@ def test_analysis_sales_filters_sum_only_matching_lines(analytics_db, filter_by,
         assert context["sales_trend"]["points"][0]["net_sales"] == metrics["net_sales"]
         assert context["top_selling_products"][0]["revenue"] == 10
 
-
 @pytest.mark.parametrize("subtotal,selected,discount,tax,expected_net,expected_discount", [
     (3, 1, 1, 0, "0.67", "0.33"),
     (0, 0, 0, 1, "0.00", "0.00"),
@@ -541,7 +583,6 @@ def test_filtered_sales_round_allocations_and_handle_zero_subtotal(
     assert result["sales_count"] == 1
     unfiltered = analytics_service.get_sales_metrics(object(), db, **filters)
     assert unfiltered["net_sales"] == Decimal(subtotal-discount+tax)
-
 
 def test_product_scoped_sales_metrics_use_only_selected_product(analytics_db):
     db, sales, products, _movements = analytics_db
