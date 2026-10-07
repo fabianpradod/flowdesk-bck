@@ -108,6 +108,7 @@ ROUTE_POLICY = {
     ("GET", "/api/v1/reports/inventario"): ADMIN,
     ("GET", "/api/v1/reports/movimientos"): ADMIN,
     ("GET", "/api/v1/reports/alertas"): ADMIN,
+    ("GET", "/api/v1/reports/tributario"): ADMIN,
     # tasks
     ("GET", "/api/v1/tasks"): OWNER,
     ("POST", "/api/v1/tasks"): OWNER,
@@ -424,6 +425,8 @@ def request_kwargs(key, ref=None) -> dict:
     }
     if key == ("POST", "/api/v1/inventory/products/import"):
         return {"files": {"file": ("productos.csv", b"sku,nombre\nsku-1,Prod\n", "text/csv")}}
+    if key == ("GET", "/api/v1/reports/tributario"):
+        return {"params": {"regime": "SMALL_TAXPAYER"}}
     if key in bodies:
         return {"json": bodies[key]}
     return {}

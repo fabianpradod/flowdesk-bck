@@ -345,22 +345,24 @@ def _build_tax_sales_sheet(rows: list[dict], regime: TaxReportRegime) -> ReportS
 def _build_tax_summary(regime: TaxReportRegime, rows: list[dict], debit: dict) -> ReportSheet:
     income = sum((_to_decimal(row["total"]) for row in rows), Decimal("0.00"))
     rates = {_to_decimal(row["tasa_impuesto"]) for row in rows}
-    rate_value = next(iter(rates)) if len(rates) == 1 else ("Variable" if rates else "No disponible")
+    # A single historical rate is numeric. Multiple rates do not have one
+    # truthful scalar representation, so the Excel cell remains empty.
+    rate_value = next(iter(rates)) if len(rates) == 1 else None
     if regime == "SMALL_TAXPAYER":
         values = [
             ["Ingresos por ventas/servicios", _money(income)],
             ["Tipo impositivo", rate_value],
             ["Impuesto determinado", _money(debit["fiscal_debit"])],
-            ["Retenciones", "No disponible"],
-            ["Impuesto estimado", "No disponible"],
+            ["Retenciones", None],
+            ["Impuesto estimado", None],
         ]
     else:
         values = [
             ["Ventas netas", _money(sum((_to_decimal(row["subtotal"]) - _to_decimal(row["descuento"]) for row in rows), Decimal("0.00")))],
             ["Débito fiscal", _money(debit["fiscal_debit"])],
-            ["Compras con derecho a crédito", "No disponible"],
-            ["Crédito fiscal", "No disponible"],
-            ["Diferencia débito - crédito", "No disponible"],
+            ["Compras con derecho a crédito", None],
+            ["Crédito fiscal", None],
+            ["Diferencia débito - crédito", None],
         ]
     return ReportSheet("Resumen", ["Concepto", "Valor"], values)
 
