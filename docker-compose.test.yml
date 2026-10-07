@@ -1,0 +1,19 @@
+# Throwaway PostgreSQL for tests_integration/. Port 5433 (override with
+# TEST_DB_PORT, then pass the same value as DB_PORT to pytest) avoids clashing with
+# the development database from docker-compose.yml. No volume: every
+# `docker compose -f docker-compose.test.yml up -d` starts from an empty database.
+services:
+  db-test:
+    image: postgres:16.15-trixie
+    container_name: flowdesk-db-test
+    environment:
+      POSTGRES_USER: flowdesk
+      POSTGRES_PASSWORD: flowdesk
+      POSTGRES_DB: flowdesk_test
+    ports:
+      - "${TEST_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowdesk -d flowdesk_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
