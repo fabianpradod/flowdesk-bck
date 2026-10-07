@@ -1,12 +1,13 @@
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session
 
 from app.models.users import User
 from app.schemas.inventory import AnalyticsPeriod, MovementType
-from app.schemas.reports import ReportDataset, ReportFormat, ReportType
+from app.schemas.reports import ReportDataset, ReportFormat, ReportSheet, ReportType, ReportWorkbook, TaxReportRegime
 from app.services.inventory import (
     _get_tenant_tables_for_user,
     _resolve_analytics_range,
@@ -14,10 +15,12 @@ from app.services.inventory import (
     _utcnow,
     format_inventory_history_row,
 )
+from app.services.analytics import FINAL_SALE_STATES
 from app.utils.csv_report import render_csv
 from app.utils.exceptions import AppError
 from app.utils.logger import logger
 from app.utils.pdf_report import render_pdf
+from app.utils.xlsx_report import render_xlsx
 
 INVENTORY_COLUMNS = [
     "SKU",
@@ -63,6 +66,18 @@ DIRECTION_LABELS = {"in": "Entrada", "out": "Salida"}
 EMPTY_CELL = "—"
 GENERATED_STATUS = "generado"
 RENDERERS = {"csv": render_csv, "pdf": render_pdf}
+
+SMALL_PURCHASE_COLUMNS = [
+    "No.", "Fecha", "Tipo Documento", "Número Documento", "NIT Proveedor",
+    "Nombre Proveedor", "Total Compra",
+]
+SMALL_SALE_COLUMNS = [
+    "No.", "Fecha", "Número Factura", "NIT Comprador", "Nombre Comprador", "Total Venta",
+]
+GENERAL_COLUMNS = [
+    "No.", "Fecha", "Tipo Documento", "Serie / Autorización", "Número Documento",
+    "NIT", "Nombre", "Valor Neto / Base", "IVA", "Total Documento",
+]
 
 
 def build_inventory_dataset(
@@ -243,6 +258,124 @@ def build_alerts_dataset(
         metadata=_build_metadata(current_user, filters=filters, analytics_range=analytics_range),
     )
 
+def build_tax_report(
+    current_user: User,
+    db: Session,
+    *,
+    regime: TaxReportRegime,
+    period: AnalyticsPeriod = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> ReportWorkbook:
+    """Build the internal tax-control workbook from real tenant sales data.
+
+    Purchases are intentionally not inferred from inventory movements: the
+    current schema has no fiscal purchase/document model.
+    """
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    tables = _get_tenant_tables_for_user(current_user)
+    sales = tables["venta"]
+    clients = tables["cliente"]
+    query = (
+        select(
+            sales.c.fecha,
+            sales.c.subtotal,
+            sales.c.descuento,
+            sales.c.impuesto,
+            sales.c.tasa_impuesto,
+            sales.c.total,
+            sales.c.es_exenta,
+            clients.c.nombre.label("cliente_nombre"),
+        )
+        .select_from(sales.outerjoin(clients, sales.c.cliente_id == clients.c.id))
+        .where(
+            sales.c.fecha >= analytics_range["start"],
+            sales.c.fecha <= analytics_range["end"],
+            func.lower(sales.c.estado).in_(FINAL_SALE_STATES),
+        )
+        .order_by(sales.c.fecha.asc(), sales.c.id.asc())
+    )
+    sales_rows = [dict(row) for row in db.execute(query).mappings()]
+    debit = _get_fiscal_debit_for_report(current_user, db, period, start_date, end_date)
+
+    sale_sheet = _build_tax_sales_sheet(sales_rows, regime)
+    purchase_sheet = ReportSheet(
+        name="Compras",
+        columns=SMALL_PURCHASE_COLUMNS if regime == "SMALL_TAXPAYER" else GENERAL_COLUMNS,
+        rows=[],
+    )
+    summary = _build_tax_summary(regime, sales_rows, debit)
+    return ReportWorkbook(
+        title="Reporte Tributario",
+        sheets=[purchase_sheet, sale_sheet, summary],
+        metadata=_build_metadata(
+            current_user,
+            filters=[f"Régimen: {regime}"],
+            analytics_range=analytics_range,
+        ),
+    )
+
+def generate_tax_report(
+    report: ReportWorkbook,
+    current_user: User,
+    db: Session,
+) -> tuple[bytes, str]:
+    payload = render_xlsx(report)
+    _record_generation(current_user, db, report, report_type="tributario", report_format="xlsx")
+    return payload, build_filename("tributario", "xlsx")
+
+def _build_tax_sales_sheet(rows: list[dict], regime: TaxReportRegime) -> ReportSheet:
+    if regime == "SMALL_TAXPAYER":
+        values = [
+            [index, _date_value(row["fecha"]), None, None,
+             row["cliente_nombre"] or "Consumidor Final", _money(row["total"])]
+            for index, row in enumerate(rows, start=1)
+        ]
+        return ReportSheet("Ventas", SMALL_SALE_COLUMNS, values)
+
+    values = [
+        [index, _date_value(row["fecha"]), "Venta", None, None, None,
+         row["cliente_nombre"] or "Consumidor Final",
+         _money(_to_decimal(row["subtotal"]) - _to_decimal(row["descuento"])),
+         _money(row["impuesto"]), _money(row["total"])]
+        for index, row in enumerate(rows, start=1)
+    ]
+    return ReportSheet("Ventas", GENERAL_COLUMNS, values)
+
+def _build_tax_summary(regime: TaxReportRegime, rows: list[dict], debit: dict) -> ReportSheet:
+    income = sum((_to_decimal(row["total"]) for row in rows), Decimal("0.00"))
+    rates = {_to_decimal(row["tasa_impuesto"]) for row in rows}
+    rate_value = next(iter(rates)) if len(rates) == 1 else ("Variable" if rates else "No disponible")
+    if regime == "SMALL_TAXPAYER":
+        values = [
+            ["Ingresos por ventas/servicios", _money(income)],
+            ["Tipo impositivo", rate_value],
+            ["Impuesto determinado", _money(debit["fiscal_debit"])],
+            ["Retenciones", "No disponible"],
+            ["Impuesto estimado", "No disponible"],
+        ]
+    else:
+        values = [
+            ["Ventas netas", _money(sum((_to_decimal(row["subtotal"]) - _to_decimal(row["descuento"]) for row in rows), Decimal("0.00")))],
+            ["Débito fiscal", _money(debit["fiscal_debit"])],
+            ["Compras con derecho a crédito", "No disponible"],
+            ["Crédito fiscal", "No disponible"],
+            ["Diferencia débito - crédito", "No disponible"],
+        ]
+    return ReportSheet("Resumen", ["Concepto", "Valor"], values)
+
+def _get_fiscal_debit_for_report(current_user, db, period, start_date, end_date) -> dict:
+    from app.services.analytics import get_fiscal_debit
+
+    return get_fiscal_debit(
+        current_user, db, period=period, start_date=start_date, end_date=end_date
+    )
+
+def _date_value(value: datetime | date) -> date:
+    return value.date() if isinstance(value, datetime) else value
+
+def _money(value) -> Decimal:
+    return _to_decimal(value).quantize(Decimal("0.01"))
 
 def _build_metadata(
     current_user: User,
