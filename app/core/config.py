@@ -39,6 +39,12 @@ HSTS_MAX_AGE: int = int(os.getenv("HSTS_MAX_AGE", "63072000"))
 
 # Email
 FRONTEND_URL: str = os.getenv("FRONTEND_URL")
+# Explicit override replaces local defaults; use it in production to exclude localhost.
+CORS_ORIGINS: list[str] = (
+    _csv("CORS_ORIGINS") if "CORS_ORIGINS" in os.environ else
+    list(dict.fromkeys(["http://localhost:5173", "http://localhost:3000"] +
+                       ([FRONTEND_URL.rstrip("/")] if FRONTEND_URL else [])))
+)
 SMTP_USERNAME: str = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD")
 

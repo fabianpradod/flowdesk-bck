@@ -6,7 +6,7 @@ the patch only has to be active while the app is being built.
 
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from app.core.https import SecureFastAPI as FastAPI
 from fastapi.testclient import TestClient
 
 from app.core import config
@@ -27,6 +27,7 @@ def build_app(force_https=False, allowed_hosts=None, hsts_max_age=63072000):
         HSTS_MAX_AGE=hsts_max_age,
     ):
         configure_transport_security(app)
+        app.middleware_stack = app.build_middleware_stack()
     return app
 
 
@@ -125,3 +126,18 @@ def test_https_is_off_by_default():
     """Turning it on by default would break local dev and the rest of the suite."""
     assert config.FORCE_HTTPS is False
     assert config.ALLOWED_HOSTS == []
+
+
+def test_hsts_is_not_sent_on_the_plain_http_redirect():
+    response = client(build_app(force_https=True)).get('/ping', follow_redirects=False)
+    assert response.status_code == 307
+    assert 'strict-transport-security' not in response.headers
+    for name, value in SECURITY_HEADERS.items():
+        assert response.headers[name] == value
+
+
+def test_rejected_hosts_still_have_security_headers():
+    response = client(build_app(allowed_hosts=['api.flowdesk.com'])).get('/ping')
+    assert response.status_code == 400
+    for name, value in SECURITY_HEADERS.items():
+        assert response.headers[name] == value
