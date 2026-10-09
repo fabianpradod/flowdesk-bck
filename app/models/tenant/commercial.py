@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Numeric, String, text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, JSON, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.tenant.base import Base, TENANT_SCHEMA
@@ -79,5 +79,6 @@ class ConfiguracionTributaria(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tasa_impuesto = Column(Numeric(5, 2), nullable=False, server_default=text("0"))
+    perfil_tributario = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=text("now()"))
     updated_at = Column(DateTime, nullable=False, server_default=text("now()"))
