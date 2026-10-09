@@ -90,6 +90,27 @@ ROUTE_POLICY = {
     ("GET", "/api/v1/commercial/sales/{sale_id}"): AUTHENTICATED,
     ("GET", "/api/v1/commercial/tax-configuration"): AUTHENTICATED,
     ("PUT", "/api/v1/commercial/tax-configuration"): ADMIN,
+    ("GET", "/api/v1/tax/profile"): AUTHENTICATED,
+    ("POST", "/api/v1/tax/calculate"): AUTHENTICATED,
+    ("POST", "/api/v1/tax/period/calculate"): AUTHENTICATED,
+    ("POST", "/api/v1/tax/import-batches"): ADMIN,
+    ("POST", "/api/v1/tax/documents"): ADMIN,
+    ("GET", "/api/v1/tax/documents"): AUTHENTICATED,
+    ("GET", "/api/v1/tax/documents/{document_id}"): AUTHENTICATED,
+    ("PATCH", "/api/v1/tax/documents/{document_id}"): ADMIN,
+    ("POST", "/api/v1/tax/imports"): ADMIN,
+    ("POST", "/api/v1/tax/imports/{batch_id}/preview"): ADMIN,
+    ("POST", "/api/v1/tax/imports/{batch_id}/validate"): ADMIN,
+    ("POST", "/api/v1/tax/imports/{batch_id}/execute"): ADMIN,
+    ("GET", "/api/v1/tax/import-mappings"): AUTHENTICATED,
+    ("POST", "/api/v1/tax/import-mappings"): ADMIN,
+    ("GET", "/api/v1/tax/import-mappings/{mapping_id}"): AUTHENTICATED,
+    ("PATCH", "/api/v1/tax/import-mappings/{mapping_id}"): ADMIN,
+    ("DELETE", "/api/v1/tax/import-mappings/{mapping_id}"): ADMIN,
+    ("PUT", "/api/v1/tax/profile"): ADMIN,
+    ("POST", "/api/v1/tax/profile/validate"): ADMIN,
+    ("GET", "/api/v1/tax/rules"): AUTHENTICATED,
+    ("POST", "/api/v1/tax/rules"): ADMIN,
     # analytics and ai analysis
     ("GET", "/api/v1/analytics/sales/metrics"): MANAGER_STRICT,
     ("GET", "/api/v1/analytics/sales/fiscal-debit"): MANAGER_STRICT,
@@ -413,6 +434,18 @@ def request_kwargs(key, ref=None) -> dict:
         ("PUT", "/api/v1/tasks/{task_id}"): {"titulo": "Tarea 2"},
         ("PATCH", "/api/v1/tasks/{task_id}/status"): {"estado": "completada"},
         ("PUT", "/api/v1/commercial/tax-configuration"): {"tasa_impuesto": "12"},
+        ("PUT", "/api/v1/tax/profile"): {"effective_from": "2026-01-01", "taxes": [], "rules": []},
+        ("POST", "/api/v1/tax/calculate"): {"as_of": "2026-01-01", "operations": []},
+        ("POST", "/api/v1/tax/period/calculate"): {"start_date": "2026-01-01", "end_date": "2026-01-31"},
+        ("POST", "/api/v1/tax/import-batches"): {"source_type": "manual"},
+        ("POST", "/api/v1/tax/documents"): {"document_type": "OTHER", "issue_date": "2026-01-01", "currency": "USD"},
+        ("PATCH", "/api/v1/tax/documents/{document_id}"): {"status": "ACTIVE"},
+        ("POST", "/api/v1/tax/imports/{batch_id}/preview"): {"json": {}},
+        ("POST", "/api/v1/tax/imports/{batch_id}/validate"): {"json": {}},
+        ("POST", "/api/v1/tax/imports/{batch_id}/execute"): {"json": {}},
+        ("POST", "/api/v1/tax/import-mappings"): {"name": "CSV", "source_type": "CSV", "mapping": {}},
+        ("PATCH", "/api/v1/tax/import-mappings/{mapping_id}"): {"name": "CSV updated"},
+        ("POST", "/api/v1/tax/rules"): {"calculation": {"type": "fixed", "value": "0"}},
         ("POST", "/api/v1/ai/analysis"): {"scope": "inventory"},
         ("POST", "/api/v1/ai/chat"): {"message": "Sales?", "conversation_id": ref},
         ("POST", "/api/v1/auth/register"): {
@@ -425,6 +458,8 @@ def request_kwargs(key, ref=None) -> dict:
     }
     if key == ("POST", "/api/v1/inventory/products/import"):
         return {"files": {"file": ("productos.csv", b"sku,nombre\nsku-1,Prod\n", "text/csv")}}
+    if key == ("POST", "/api/v1/tax/imports"):
+        return {"files": {"file": ("documents.csv", b"document_type,issue_date,currency\nINVOICE,2026-01-01,USD\n", "text/csv")}}
     if key == ("GET", "/api/v1/reports/tributario"):
         return {"params": {"regime": "SMALL_TAXPAYER"}}
     if key in bodies:
