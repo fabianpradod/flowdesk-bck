@@ -39,6 +39,31 @@ def _migrate_existing_tenant_schema(connection, schema_name: str) -> None:
             "tasa_impuesto": "NUMERIC(5, 2) NOT NULL DEFAULT 0",
             "es_exenta": "BOOLEAN NOT NULL DEFAULT FALSE",
         },
+        "configuracion_tributaria": {
+            "perfil_tributario": "JSON NULL",
+        },
+        "fiscal_document": {
+            "direction": "VARCHAR(20) NOT NULL DEFAULT 'INPUT'",
+        },
+        "tax_component": {
+            "tax_name": "VARCHAR(150) NULL",
+            "retention_id": "VARCHAR(150) NULL",
+            "withholding_type": "VARCHAR(50) NULL",
+            "withholding_role": "VARCHAR(50) NULL",
+            "applied_to": "VARCHAR(50) NULL",
+            "withholding_effect": "VARCHAR(30) NULL",
+        },
+        "import_mapping": {
+            "description": "VARCHAR(500) NULL",
+            "encoding": "VARCHAR(50) NULL",
+            "date_format": "VARCHAR(20) NULL",
+            "decimal_separator": "VARCHAR(1) NULL",
+            "thousands_separator": "VARCHAR(1) NULL",
+            "header_row": "INTEGER NOT NULL DEFAULT 1",
+            "data_start_row": "INTEGER NULL",
+            "group_by": "JSON NULL",
+            "is_active": "BOOLEAN NOT NULL DEFAULT TRUE",
+        },
     }
 
     for table_name, columns in required_columns.items():
