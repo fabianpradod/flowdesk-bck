@@ -9,6 +9,7 @@ from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate, TaxCo
 from app.services.inventory import _sync_stock_alerts
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
+from app.taxation.legacy import resolve_legacy_sales_rate
 
 MONEY_QUANTUM = Decimal("0.01")
 MAX_TAX_RATE = Decimal("100")
@@ -547,15 +548,4 @@ def _round_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 def _get_tax_rate(db: Session, configuration) -> Decimal:
-    row = db.execute(
-        select(configuration.c.tasa_impuesto)
-        .order_by(configuration.c.updated_at.desc(), configuration.c.created_at.desc())
-        .limit(1)
-    ).mappings().first()
-
-    if row is None:
-        # A missing legacy configuration is intentionally equivalent to the
-        # documented, valid 0% default. It must not affect other tenants or
-        # rewrite the tax snapshot stored on historical sales.
-        return DEFAULT_TAX_RATE
-    return _decimal(row["tasa_impuesto"])
+    return resolve_legacy_sales_rate(db, configuration)
