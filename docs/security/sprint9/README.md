@@ -64,6 +64,57 @@ HSTS sigue condicionado a `FORCE_HTTPS=true` y ahora solo sale sobre HTTPS.
 La validación de Host sucede antes de redirigir. Configurar hosts, TLS, proxy y
 orígenes exactos sigue siendo una tarea de despliegue.
 
+## Revisión del PR: composición de middleware y consumidores CORS
+
+Verificado el 10 de octubre de 2026 contra el commit revisado `43326c4`.
+`configure_transport_security()` contiene un solo registro de
+`TrustedHostMiddleware`, con `allowed_hosts=config.ALLOWED_HOSTS`, y `main.py`
+llama esa función una sola vez. No existe el segundo registro mencionado en la
+revisión. No se eliminó código funcional ni se cambió la pila para simular una
+corrección. Se añadieron pruebas de regresión de la pila real en las cuatro
+combinaciones de HTTPS activado/desactivado y lista de hosts vacía/configurada.
+
+Orden exterior → interior con ambas opciones activas:
+
+```text
+SecurityHeadersMiddleware
+CORSMiddleware
+ServerErrorMiddleware
+TrustedHostMiddleware (una instancia)
+HTTPSRedirectMiddleware (una instancia)
+ExceptionMiddleware / AsyncExitStackMiddleware / router
+```
+
+Las pruebas verifican tanto la instancia única y el orden como el comportamiento:
+host permitido responde, host ajeno responde 400 sin `Location`, host permitido
+sobre HTTP redirige a HTTPS. CORS permanece exterior para cubrir errores 500;
+los preflights son resueltos por CORS antes de entrar a los guards interiores.
+Esto describe el comportamiento existente, sin atribuir validación de Host a
+preflights que CORS resuelve directamente.
+
+### Contrato del frontend comprobado
+
+Se actualizó la referencia remota `master` de `yehosuah/flowdesk-frt` y se revisó
+el commit **`fff1a7d9241008b6fd060f2c1adcd992c65c5085`**, sin modificar su checkout.
+Se buscaron todas las construcciones y sobrescrituras de headers y llamadas
+fetch/axios/XHR en `src` y `netlify`. No se encontraron headers personalizados
+adicionales requeridos por esos consumidores. El cliente admite un argumento
+`headers`, pero sus consumidores actuales no pasan overrides adicionales.
+
+| Consumidor | Headers de solicitud observados | Métodos |
+|---|---|---|
+| [apiClient.ts](https://github.com/yehosuah/flowdesk-frt/blob/fff1a7d9241008b6fd060f2c1adcd992c65c5085/src/services/apiClient.ts#L113) y sus consumidores | Accept, Content-Type cuando hay JSON, Authorization cuando hay sesión | GET, POST, PUT, PATCH, DELETE |
+| [Importación Excel](https://github.com/yehosuah/flowdesk-frt/blob/fff1a7d9241008b6fd060f2c1adcd992c65c5085/src/features/inventory/import.ts#L51) | Authorization; Content-Type multipart con boundary generado por el navegador | POST |
+| [Descarga de reportes](https://github.com/yehosuah/flowdesk-frt/blob/fff1a7d9241008b6fd060f2c1adcd992c65c5085/src/features/reports/views/ReportsView.vue#L1232) | Authorization | GET |
+| [Proxy Netlify](https://github.com/yehosuah/flowdesk-frt/blob/fff1a7d9241008b6fd060f2c1adcd992c65c5085/netlify/functions/proxy.ts#L17) hacia backend | Content-Type, Authorization opcional | Reenvía el método; es tráfico servidor a servidor, sin preflight de navegador |
+
+`Accept` pertenece a los headers simples admitidos por CORSMiddleware. JSON,
+Authorization y multipart quedan cubiertos por la política actual. Se añadieron
+pruebas OPTIONS con estas combinaciones, incluidas descargas, importación,
+PUT/PATCH/DELETE. No fue necesario ampliar `allow_headers` ni `allow_methods`.
+La conclusión se limita al código versionado citado: no certifica otros clientes,
+headers añadidos por infraestructura o la versión actualmente desplegada.
+
 ## Escaneo ZAP antes/después
 
 ZAP 2.17.0, imagen oficial fijada por digest:
@@ -126,19 +177,58 @@ entorno descartable y usuarios de prueba.
 
 ## Riesgos residuales y aceptación
 
-**Estado de aceptación: pendiente.** Esta tabla documenta riesgos; no concede
-aceptación ni declara completado SCRUM-633.
+### Aceptación para este PR
 
-| Riesgo | Tratamiento propuesto / condición de cierre |
+**Riesgos formalmente aceptados: ninguno.** No hay una aprobación explícita del
+equipo en la evidencia disponible. La excepción técnica de compatibilidad se
+conserva en este PR y se propone para aceptación en la revisión; esto no equivale
+a aceptar su exposición en producción ni a cerrar SCRUM-633. La aprobación del
+código debe distinguirse de la aprobación de riesgos del despliegue.
+
+| Excepción conservada / aceptación propuesta | Motivo y alcance | Riesgo que sigue existiendo |
+|---|---|---|
+| `style-src 'unsafe-inline'` (10055-6) | Swagger/ReDoc requieren estilos inline; solo HTML de documentación, nunca CSP de API JSON | Inyección de estilos si existe una vulnerabilidad HTML; scripts inline siguen restringidos por hashes |
+| Recursos CDN de docs sin SRI (90003) y JavaScript externo (10017) | Se mantiene la carga de documentación existente de jsDelivr; CSP limita el dominio | Una alteración del recurso permitido por el CDN no queda impedida por SRI |
+
+Responsable de aceptar o rechazar estas excepciones: equipo mantenedor y
+responsable del despliegue. No se ha registrado esa aceptación. Si no se acepta,
+se requiere restringir/deshabilitar docs públicas o servir assets versionados
+locales con integridad y adaptar sus estilos antes de exponerlas.
+
+### Mitigaciones pendientes
+
+| Pendiente | Condición de cierre |
 |---|---|
-| Estilos inline y dependencias CDN de docs sin SRI | Restringir/deshabilitar documentación pública o servir assets locales versionados con SRI; verificar Swagger/ReDoc al cambiarlo |
-| COOP, COEP y Permissions Policy ausentes | Evaluar en el despliegue junto con CDN y callback OAuth antes de aplicar políticas que puedan romperlos |
-| Localhost permitido en configuración por defecto | Configurar `CORS_ORIGINS` con el origen real en producción |
-| HTTPS/Host opt-in y proxy fuera del escaneo | Activar TLS, FORCE_HTTPS y ALLOWED_HOSTS; verificar headers desde el exterior |
+| Eliminar/reducir estilos inline y dependencia CDN sin SRI | Assets locales versionados/integridad, adaptación de estilos o docs restringidas; verificar Swagger/ReDoc |
+| COOP, COEP y Permissions Policy ausentes (90004-2, 90004-3, 10063-1) | Evaluar e implementar políticas compatibles con CDN y callback OAuth; no se declaran aceptadas |
+| Defaults locales y HTTPS/Host opt-in | Configurar `CORS_ORIGINS`, `FORCE_HTTPS`, `ALLOWED_HOSTS` y proxy con valores del entorno |
 | CSP del frontend fuera de este repositorio | Implementar/verificar en el servidor que entrega el frontend |
-| Reporte ZAP histórico no disponible | Adjuntarlo y contrastar sus hallazgos; no inferir que son iguales a la línea base local |
-| Escaneo sin sesión ni base real | Repetir baseline y pruebas autenticadas con datos de prueba en staging |
-| Recomendaciones F18–F25 de la revisión previa | Continúan pendientes; ver `docs/revision-seguridad.md` (rate limit, contraseñas, xlsx descomprimido, docs públicas, permisos de movimientos, SECRET_KEY, tiempos login y reset reutilizable) |
+| Reporte ZAP histórico no disponible | Adjuntarlo y contrastar sus hallazgos con esta línea base |
+| Recomendaciones F18–F25 de la revisión previa | Continúan pendientes en `docs/revision-seguridad.md`; este PR no las declara resueltas ni aceptadas |
+
+### Validaciones posteriores en staging/producción
+
+Antes de dar por validado el despliegue, el responsable del entorno debe conservar
+evidencia de estas comprobaciones:
+
+1. Desde la URL pública real, verificar TLS/certificado, HSTS sobre HTTPS,
+   redirección HTTP sin bucles detrás del proxy y rechazo de Host no autorizado.
+2. Verificar CSP y demás headers en respuestas 200/401/403/404/422/500 y descargas,
+   incluidos errores que emita el proxy; confirmar que no se cachean datos privados.
+3. Desde el origen real del frontend, probar login, operaciones GET/POST/PUT/PATCH/
+   DELETE, importación multipart y descarga; verificar preflight, headers que
+   realmente añade infraestructura y rechazo de orígenes ajenos.
+4. Repetir baseline ZAP sobre backend y frontend desplegados y un escaneo
+   autenticado en staging con cuentas de prueba de distintos roles/tenants,
+   PostgreSQL descartable y servicios externos controlados. No ejecutar ataques
+   activos contra producción ni usar datos reales sin un alcance autorizado.
+5. Verificar Swagger/ReDoc y callback OAuth si siguen habilitados; comprobar las
+   mitigaciones decididas para CDN/SRI, estilos inline y políticas de aislamiento.
+6. Registrar aceptación explícita, responsable, alcance y fecha para cada riesgo
+   residual que se decida conservar. Hasta entonces SCRUM-633 sigue pendiente.
+
+El baseline local de este PR no cumple por sí solo ninguna certificación de
+producción ni cubre TLS/proxy, base real o todas las sesiones autenticadas.
 
 ## Validación automatizada
 
@@ -147,9 +237,9 @@ aceptación ni declara completado SCRUM-633.
 .venv/bin/python -m pytest tests/test_sprint9_security.py tests/test_transport_security.py -q
 ```
 
-Resultado final tras integrar `origin/main`: **2510 pruebas aprobadas, 5 omitidas
-y 5 subtests aprobados**, en 14.93 segundos. Las omitidas requieren PostgreSQL descartable o llamadas
-reales a Z.AI. El subconjunto de transporte/Sprint 9 aprobó 29 pruebas.
+Resultado tras atender la revisión del PR (10 de octubre de 2026):
+**2522 pruebas aprobadas, 5 omitidas y 5 subtests aprobados**, en 14.49 segundos. Las omitidas requieren PostgreSQL descartable o llamadas
+reales a Z.AI. El subconjunto de transporte/Sprint 9 contiene 41 pruebas, incluidas las 12 nuevas de revisión.
 
 Las nuevas pruebas ejercitan respuestas 200/401/404/500, preflight permitido y
 rechazado, CORS en 500, headers/métodos no autorizados, scripts de documentación

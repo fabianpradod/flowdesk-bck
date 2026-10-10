@@ -6,6 +6,8 @@ the patch only has to be active while the app is being built.
 
 from unittest.mock import patch
 
+import pytest
+
 from app.core.https import SecureFastAPI as FastAPI
 from fastapi.testclient import TestClient
 
@@ -117,6 +119,7 @@ def test_host_validation_and_redirection_combine():
     redirected = client(app, "http://api.flowdesk.com").get("/ping", follow_redirects=False)
 
     assert rejected.status_code == 400
+    assert "location" not in rejected.headers
     assert redirected.status_code in (301, 307, 308)
 
 
@@ -141,3 +144,32 @@ def test_rejected_hosts_still_have_security_headers():
     assert response.status_code == 400
     for name, value in SECURITY_HEADERS.items():
         assert response.headers[name] == value
+
+
+def _middleware_layers(app):
+    layers = []
+    layer = app.middleware_stack
+    while layer is not None:
+        layers.append(type(layer))
+        layer = getattr(layer, 'app', None)
+    return layers
+
+
+@pytest.mark.parametrize('force_https', [False, True])
+@pytest.mark.parametrize('allowed_hosts', [[], ['api.flowdesk.com']])
+def test_security_stack_has_one_host_guard_in_the_expected_order(force_https, allowed_hosts):
+    from starlette.middleware.cors import CORSMiddleware
+    from starlette.middleware.errors import ServerErrorMiddleware
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    from app.core.https import SecurityHeadersMiddleware
+
+    layers = _middleware_layers(build_app(force_https=force_https, allowed_hosts=allowed_hosts))
+    assert layers.count(TrustedHostMiddleware) == bool(allowed_hosts)
+    assert layers.count(HTTPSRedirectMiddleware) == force_https
+    expected_outer_layers = [SecurityHeadersMiddleware, CORSMiddleware, ServerErrorMiddleware]
+    if allowed_hosts:
+        expected_outer_layers.append(TrustedHostMiddleware)
+    if force_https:
+        expected_outer_layers.append(HTTPSRedirectMiddleware)
+    assert layers[:len(expected_outer_layers)] == expected_outer_layers

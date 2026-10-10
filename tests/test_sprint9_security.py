@@ -119,3 +119,31 @@ def test_docs_csp_works_behind_a_proxy_path_prefix():
     assert response.status_code == 200
     assert 'sha256-' in response.headers['content-security-policy']
     assert '/service/openapi.json' in response.text
+
+
+@pytest.mark.parametrize('path,method,headers', [
+    ('/api/v1/auth/login', 'POST', 'accept,content-type'),
+    ('/api/v1/inventory/products', 'GET', 'accept,authorization'),
+    ('/api/v1/commercial/sales', 'POST', 'accept,authorization,content-type'),
+    ('/api/v1/inventory/products/import', 'POST', 'authorization,content-type'),
+    ('/api/v1/reports/inventario', 'GET', 'authorization'),
+    ('/api/v1/commercial/clients/00000000-0000-0000-0000-000000000001',
+     'PUT', 'accept,authorization,content-type'),
+    ('/api/v1/commercial/clients/00000000-0000-0000-0000-000000000001/status',
+     'PATCH', 'accept,authorization,content-type'),
+    ('/api/v1/commercial/clients/00000000-0000-0000-0000-000000000001',
+     'DELETE', 'accept,authorization'),
+])
+def test_preflights_cover_observed_frontend_headers(client, path, method, headers):
+    # Observed in yehosuah/flowdesk-frt at fff1a7d; evidence is in Sprint 9 docs.
+    origin = config.CORS_ORIGINS[0]
+    response = client.options(path, headers={
+        'Origin': origin,
+        'Access-Control-Request-Method': method,
+        'Access-Control-Request-Headers': headers,
+    })
+    assert response.status_code == 200
+    assert response.headers['access-control-allow-origin'] == origin
+    allowed = {header.strip().lower() for header in
+               response.headers['access-control-allow-headers'].split(',')}
+    assert set(headers.split(',')) <= allowed
