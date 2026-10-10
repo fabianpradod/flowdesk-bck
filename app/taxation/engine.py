@@ -243,8 +243,19 @@ class TaxEngine:
         if left is None:
             return operator == "neq" and right is not None
 
-        return {"eq": left == right, "neq": left != right, "gt": left > right,
-                "gte": left >= right, "lt": left < right, "lte": left <= right}[operator]
+        comparisons = {
+            "eq": lambda: left == right,
+            "neq": lambda: left != right,
+            "gt": lambda: left > right,
+            "gte": lambda: left >= right,
+            "lt": lambda: left < right,
+            "lte": lambda: left <= right,
+        }
+
+        if operator not in comparisons:
+            raise CalculationError(f"Unsupported condition operator: {operator}")
+
+        return comparisons[operator]()
 
     def _calculation(self, calculation, context, default_rate):
         kind = calculation["type"]

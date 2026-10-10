@@ -2,7 +2,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.schemas.taxation import TaxCalculationRequest, TaxProfileInput, TaxRuleInput
@@ -12,6 +12,13 @@ from app.utils.exceptions import AppError
 
 def _tables(user):
     return get_tenant_tables(get_user_schema_name(user))
+
+def _lock_profile_row(current_user, db: Session):
+    """Serialize profile read/modify/write transactions per tenant on PostgreSQL."""
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+                   {"lock_key": f"tax-profile:{get_user_schema_name(current_user)}"})
 
 def _profile_from_input(data: TaxProfileInput, *, version_id: str | None = None) -> TaxProfile:
     return TaxProfile(name=data.name, description=data.description,
@@ -110,6 +117,7 @@ def calculate_tax(current_user, db: Session, request: TaxCalculationRequest):
                     "metadata": payload.get("metadata"), "taxes": [component], "lines": []}
                 classification = classifier.classify_component(synthetic_document, component, operation_profile)
                 payload.update(tax_category=classification.tax_category or payload["tax_category"],
+                               tax_code=classification.tax_code or payload.get("tax_code"),
                                document_direction=classification.direction,
                                eligible_for_input_credit=classification.eligible_for_input_credit,
                                is_calculable=classification.is_calculable,
@@ -170,6 +178,7 @@ def put_tax_profile(data: TaxProfileInput, current_user, db: Session, *, _allow_
 
     table = _tables(current_user)["configuracion_tributaria"]
     now = datetime.now(timezone.utc)
+    _lock_profile_row(current_user, db)
     current = db.execute(select(table.c.id, table.c.perfil_tributario).order_by(table.c.updated_at.desc()).limit(1)).first()
     versions = list((current[1] or {}).get("profiles", []) if current else [])
     same_start = [item for item in versions if item.get("effective_from") == data.effective_from.isoformat()]

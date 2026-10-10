@@ -252,6 +252,25 @@ def _parse_decimal(value, decimal_separator=None, thousands_separator=None) -> D
 
     if negative: text = "-" + text[1:-1]
 
+    # Keep scientific notation intact.  Stripping the ``e`` before passing the
+    # value to Decimal turns e.g. ``1e3`` into ``13``.
+    if "e" in text.lower():
+        mantissa = text
+
+        if thousands_separator:
+            mantissa = mantissa.replace(thousands_separator, "")
+
+        if decimal_separator and decimal_separator != ".":
+            mantissa = mantissa.replace(decimal_separator, ".")
+
+        if not re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+", mantissa):
+            raise ImportFormatError("Invalid numeric value")
+
+        try:
+            return Decimal(mantissa)
+        except InvalidOperation as exc:
+            raise ImportFormatError("Invalid numeric value") from exc
+
     text = re.sub(r"[^0-9,\.\-+]", "", text)
 
     if decimal_separator:
@@ -320,7 +339,12 @@ def _group_rows(rows, group_by):
         current["errors"].extend(item["errors"])
         current["warnings"].extend(item["warnings"])
 
-    return list(groups.values())
+    grouped = list(groups.values())
+
+    for item in grouped:
+        _recompute_document_totals(item["data"])
+
+    return grouped
 
 def _merge_document_rows(target, source):
     for key, value in source.items():
@@ -333,9 +357,10 @@ def _merge_document_rows(target, source):
         elif target.get(key) in (None, ""):
             target[key] = value
 
-    if target.get("lines"):
-        target.setdefault("taxable_base", sum((_decimal_or_zero(line.get("taxable_base")) for line in target["lines"]), Decimal("0")))
-        target.setdefault("total", sum((_decimal_or_zero(line.get("total")) for line in target["lines"]), Decimal("0")))
+def _recompute_document_totals(data):
+    if data.get("lines"):
+        data["taxable_base"] = sum((_decimal_or_zero(line.get("taxable_base")) for line in data["lines"]), Decimal("0"))
+        data["total"] = sum((_decimal_or_zero(line.get("total")) for line in data["lines"]), Decimal("0"))
 
 def _value_at(data, path):
     value = data

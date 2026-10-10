@@ -41,6 +41,7 @@ def preview(batch_id: UUID, options: ImportPreviewOptions, current_user, db):
         headers, rows = read_rows(content, file_format, delimiter=settings["delimiter"], sheet=settings["sheet"], encoding=settings["encoding"], header_row=settings["header_row"], data_start_row=settings["data_start_row"])
         mapping = options.mapping or profile.get("mapping") or {}
         result = normalize_and_validate(rows, mapping, locale=settings["locale"], date_format=settings["date_format"], decimal_separator=settings["decimal_separator"], thousands_separator=settings["thousands_separator"], group_by=settings["group_by"])
+        _validate_persistable_rows(result)
     
     except ImportFormatError: raise AppError(status_code=422, message="Unable to parse import file")
     
@@ -80,7 +81,7 @@ def execute(batch_id: UUID, options: ImportPreviewOptions, current_user, db):
     
         try:
             original = {key: (value.isoformat() if hasattr(value, "isoformat") else str(value) if value is not None else None) for key, value in item.get("original", {}).items()}
-            data = dict(item["data"]); data.update(source_type=file_format, import_batch_id=batch_id,
+            data = _schema_data(item["data"]); data.update(source_type=file_format, import_batch_id=batch_id,
                 source_row=item["row"], original_identifier=data.get("document_number"),
                 metadata={"original_row": original, "source_rows": item.get("source_rows", [item["row"]]), "import_mapping_id": str(options.mapping_id) if options.mapping_id else None})
             payload = FiscalDocumentCreate.model_validate(data)
@@ -161,7 +162,7 @@ def _duplicate_candidates(rows, user, db):
             continue
 
         try:
-            payload = FiscalDocumentCreate.model_validate(item["data"])
+            payload = FiscalDocumentCreate.model_validate(_schema_data(item["data"]))
 
             if fiscal_documents.has_potential_duplicate(db, documents, payload):
                 candidates.append({"row": item.get("row"), "source_rows": item.get("source_rows", [item.get("row")]), "reason": "potential_duplicate"})
@@ -170,6 +171,32 @@ def _duplicate_candidates(rows, user, db):
             continue
 
     return candidates
+
+def _schema_data(data):
+    """Flatten importer-friendly nested parties to the persistence schema."""
+    data = dict(data)
+
+    for party in ("issuer", "receiver"):
+        values = data.pop(party, {}) or {}
+        for field, value in values.items():
+            data[f"{party}_{field}"] = value
+
+    return data
+
+def _validate_persistable_rows(result):
+    for item in result["rows"]:
+        if item["errors"]:
+            continue
+
+        try:
+            FiscalDocumentCreate.model_validate(_schema_data(item["data"]))
+        except Exception:
+            item["errors"].append("Invalid fiscal document data")
+
+    result["errors"] = [{"row": item["row"], "errors": item["errors"]}
+                         for item in result["rows"] if item["errors"]]
+    result["rows_valid"] = sum(not item["errors"] for item in result["rows"])
+    result["rows_invalid"] = sum(bool(item["errors"]) for item in result["rows"])
 
 def _mapping_dict(row):
     result = dict(row); result["metadata"] = result.pop("metadata_json", None); return result

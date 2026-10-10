@@ -15,10 +15,13 @@ def calculate_period(current_user, db: Session, *, start_date: date, end_date: d
     if end_date < start_date:
         raise AppError(status_code=422, message="end_date must be on or after start_date")
     
-    profile = resolve_current_profile(current_user, db, start_date)
-    
-    if profile is None:
-        profile = resolve_current_profile(current_user, db, end_date)
+    try:
+        profile = resolve_current_profile(current_user, db, start_date)
+
+        if profile is None:
+            profile = resolve_current_profile(current_user, db, end_date)
+    except (CalculationError, TaxValidationError, ValueError) as exc:
+        raise AppError(status_code=422, message="Unable to resolve tax configuration for the requested period") from exc
     
     if profile is None:
         raise AppError(status_code=404, message="No tax profile is active for the requested period")
@@ -36,7 +39,6 @@ def calculate_period(current_user, db: Session, *, start_date: date, end_date: d
     rows = db.execute(select(documents.c.id, documents.c.currency, documents.c.status, documents.c.direction).where(
         documents.c.issue_date >= start_date,
         documents.c.issue_date <= end_date,
-        documents.c.status.not_in(("CANCELLED", "VOIDED")),
     )).mappings()
     document_rows = [dict(row) for row in rows]
     currencies = {row["currency"] for row in document_rows if row["currency"]}
@@ -46,25 +48,29 @@ def calculate_period(current_user, db: Session, *, start_date: date, end_date: d
 
     operations = []
     
-    for row in document_rows:
-        document = fiscal_documents.get_document(row["id"], current_user, db)
-        document.setdefault("status", row["status"])
-        document.setdefault("direction", row["direction"])
-        document_profile = profile_for_operation(document.get("issue_date"))
-        operations.extend(document_to_operations(document, document_profile))
-    
     try:
+        for row in document_rows:
+            document = fiscal_documents.get_document(row["id"], current_user, db)
+            document.setdefault("status", row["status"])
+            document.setdefault("direction", row["direction"])
+            document_profile = profile_for_operation(document.get("issue_date"))
+            operations.extend(
+                operation for operation in document_to_operations(document, document_profile)
+                if operation.document_status not in {"CANCELLED", "VOIDED"} or operation.is_calculable
+            )
+
         result = TaxEngine().calculate_period(
             operations, profile, tax_debit=Decimal(str(debit_summary["fiscal_debit"])),
             prior_carry_forward=prior_carry_forward, start_date=start_date, end_date=end_date,
             profile_resolver=profile_for_operation,
         )
     
-    except (CalculationError, TaxValidationError) as exc:
+    except (CalculationError, TaxValidationError, ValueError) as exc:
         raise AppError(status_code=422, message="Unable to resolve tax configuration for the requested period") from exc
     
     eligible_count = sum(1 for detail in result.details if detail["eligible_for_input_credit"])
-    input_document_count = sum(1 for row in document_rows if row.get("direction") == "INPUT")
+    input_document_count = sum(1 for row in document_rows if row.get("direction") == "INPUT" and
+                                row.get("status") not in {"CANCELLED", "VOIDED"})
     input_component_count = sum(1 for detail in result.details if not detail.get("is_withholding") and
                                 detail.get("document_direction", "INPUT") == "INPUT" and
                                 (detail.get("document_id") is not None))

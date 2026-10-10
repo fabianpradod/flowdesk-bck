@@ -65,7 +65,7 @@ def document_to_operations(document: dict, profile=None, *, classifier=None) -> 
         tax_amount=component["amount"],
         tax_category=classification.tax_category if classification and classification.tax_category else component["category"],
         taxable_base=component.get("taxable_base", 0),
-        tax_code=component.get("tax_code"),
+        tax_code=classification.tax_code if classification and classification.tax_code else component.get("tax_code"),
         operation_date=document.get("issue_date"),
         document_id=document.get("id"),
         tax_component_id=component.get("id"),
