@@ -161,31 +161,16 @@ class TaxEngine:
                               details=tuple(details), withholding_tax=withholding_tax)
 
     def _input_credit_eligibility(self, operation: TaxableOperation, profile: TaxProfile) -> bool:
-        context = {"tax_amount": operation.tax_amount, "tax_category": operation.tax_category,
-                   "taxable_base": operation.taxable_base,
-                   "tax_code": operation.tax_code, "eligible_for_input_credit": operation.eligible_for_input_credit,
-                   "document_status": operation.document_status, "document_direction": operation.document_direction,
-                   "is_withholding": operation.is_withholding, "metadata": operation.metadata}
-
         if operation.document_direction == "OUTPUT":
             return False
 
-        rules = sorted((rule for rule in profile.rules if rule.active and rule.is_effective(operation.operation_date) and
-                        rule.scope == "INPUT_TAX" and rule.tax_code in (None, operation.tax_code)), key=lambda rule: rule.priority)
+        rules = self._input_tax_rules(operation, profile)
 
-        calculable = operation.is_calculable
-
-        for rule in rules:
-            if rule.condition is None or self._condition(rule.condition, context):
-                if "is_calculable" in (rule.result or {}):
-                    calculable = bool(rule.result["is_calculable"])
-                    break
-
-        if not calculable:
+        if not self.is_input_calculable(operation, profile, rules=rules):
             return False
 
         for rule in rules:
-            if rule.condition is None or self._condition(rule.condition, context):
+            if rule.condition is None or self._condition(rule.condition, self._input_context(operation)):
                 if "eligible_for_input_credit" in (rule.result or {}):
                     return bool(rule.result["eligible_for_input_credit"])
 
@@ -193,6 +178,38 @@ class TaxEngine:
             return bool(operation.eligible_for_input_credit)
 
         return next((tax.eligible_for_input_credit is True for tax in profile.taxes if tax.tax_code == operation.tax_code), False)
+
+    def is_operation_calculable(self, operation: TaxableOperation, profile: TaxProfile) -> bool:
+        """Resolve whether a persisted operation participates in a period."""
+        if operation.is_withholding:
+            return self._withholding_semantics(operation, profile)[0]
+
+        if operation.document_direction == "OUTPUT":
+            return False
+
+        return self.is_input_calculable(operation, profile)
+
+    def is_input_calculable(self, operation: TaxableOperation, profile: TaxProfile, *, rules=None) -> bool:
+        rules = rules if rules is not None else self._input_tax_rules(operation, profile)
+        calculable = operation.is_calculable
+
+        for rule in rules:
+            if rule.condition is None or self._condition(rule.condition, self._input_context(operation)):
+                if "is_calculable" in (rule.result or {}):
+                    return bool(rule.result["is_calculable"])
+
+        return calculable
+
+    def _input_tax_rules(self, operation: TaxableOperation, profile: TaxProfile):
+        return sorted((rule for rule in profile.rules if rule.active and rule.is_effective(operation.operation_date) and
+                       rule.scope == "INPUT_TAX" and rule.tax_code in (None, operation.tax_code)), key=lambda rule: rule.priority)
+
+    def _input_context(self, operation: TaxableOperation):
+        return {"tax_amount": operation.tax_amount, "tax_category": operation.tax_category,
+                "taxable_base": operation.taxable_base,
+                "tax_code": operation.tax_code, "eligible_for_input_credit": operation.eligible_for_input_credit,
+                "document_status": operation.document_status, "document_direction": operation.document_direction,
+                "is_withholding": operation.is_withholding, "metadata": operation.metadata}
 
     def _withholding_semantics(self, operation: TaxableOperation, profile: TaxProfile) -> tuple[bool, str]:
         context = {"tax_amount": operation.tax_amount, "taxable_base": operation.taxable_base,

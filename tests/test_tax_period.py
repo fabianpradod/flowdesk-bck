@@ -68,3 +68,26 @@ def test_cancelled_document_is_not_used_without_status_rule(period_db):
     result = tax_period.calculate_period(user, db, start_date=date(2026, 1, 1), end_date=date(2026, 1, 31))
 
     assert result["input_documents_count"] == 0 and result["tax_credit"] == 0
+
+def test_cancelled_document_uses_input_tax_calculability_exception(period_db, monkeypatch):
+    db, user = period_db
+    documents = tax_period.get_tenant_tables(user.company.schema_name)["fiscal_document"]
+    db.execute(documents.update().values(status="CANCELLED")); db.commit()
+    profile = TaxProfile(None, None, date(2026, 1, 1), taxes=(TaxDefinition("VAT", "Input", category="TAXABLE"),), rules=(TaxRule(
+        {"field": "document_status", "operator": "eq", "value": "CANCELLED"}, scope="INPUT_TAX",
+        result={"is_calculable": True, "eligible_for_input_credit": True}),))
+    monkeypatch.setattr(tax_period, "resolve_current_profile", lambda *_args: profile)
+
+    result = tax_period.calculate_period(user, db, start_date=date(2026, 1, 1), end_date=date(2026, 1, 31))
+
+    assert result["input_documents_count"] == 1
+    assert result["tax_credit"] == Decimal("40")
+
+def test_cancelled_document_currency_is_ignored_without_calculability_exception(period_db):
+    db, user = period_db
+    documents = tax_period.get_tenant_tables(user.company.schema_name)["fiscal_document"]
+    db.execute(insert(documents).values(id=str(uuid4()), direction="INPUT", issue_date=date(2026, 1, 20), currency="EUR", status="CANCELLED")); db.commit()
+
+    result = tax_period.calculate_period(user, db, start_date=date(2026, 1, 1), end_date=date(2026, 1, 31))
+
+    assert result["currency"] == "USD"

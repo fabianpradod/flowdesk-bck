@@ -230,6 +230,10 @@ def create_tax_rule(data: TaxRuleInput, current_user, db: Session) -> dict:
     if data.effective_from is None:
         raise AppError(status_code=422, message="effective_from is required when creating a tax rule")
 
+    # The profile is read, amended, and written in one tenant-scoped
+    # transaction.  Acquiring the lock only in put_tax_profile leaves this
+    # initial read vulnerable to a lost update.
+    _lock_profile_row(current_user, db)
     profiles = get_tax_profile(current_user, db).get("profiles", [])
 
     if not profiles:

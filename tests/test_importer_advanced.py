@@ -48,6 +48,20 @@ def test_group_by_builds_one_document_with_multiple_lines():
     assert result["rows"][0]["source_rows"] == [2, 3]
     assert len(result["rows"][0]["data"]["lines"]) == 2
 
+def test_group_by_preserves_explicit_header_totals_when_lines_have_no_amounts():
+    mapping = {
+        "Type": "document_type", "Date": "issue_date", "Currency": "currency", "Number": "document_number",
+        "Base": "taxable_base", "Total": "total", "Description": "lines[0].description",
+    }
+    result = normalize_and_validate([
+        {"Type": "INVOICE", "Date": "2026-01-01", "Currency": "USD", "Number": "A-1", "Base": "100", "Total": "120", "Description": "One"},
+        {"Type": "INVOICE", "Date": "2026-01-01", "Currency": "USD", "Number": "A-1", "Base": "", "Total": "", "Description": "Two"},
+    ], mapping, group_by=["document_number"])
+
+    document = result["rows"][0]["data"]
+    assert document["taxable_base"] == Decimal("100")
+    assert document["total"] == Decimal("120")
+
 def test_negative_decimal_is_reported_as_row_error_and_original_is_preserved():
     result = normalize_and_validate([{"Type": "INVOICE", "Date": "2026-01-01", "Currency": "USD", "Base": "-10"}], {
         "Type": "document_type", "Date": "issue_date", "Currency": "currency", "Base": "taxable_base",

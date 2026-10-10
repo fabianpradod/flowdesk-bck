@@ -359,8 +359,11 @@ def _merge_document_rows(target, source):
 
 def _recompute_document_totals(data):
     if data.get("lines"):
-        data["taxable_base"] = sum((_decimal_or_zero(line.get("taxable_base")) for line in data["lines"]), Decimal("0"))
-        data["total"] = sum((_decimal_or_zero(line.get("total")) for line in data["lines"]), Decimal("0"))
+        if data.get("taxable_base") in (None, ""):
+            data["taxable_base"] = sum((_decimal_or_zero(line.get("taxable_base")) for line in data["lines"]), Decimal("0"))
+
+        if data.get("total") in (None, ""):
+            data["total"] = sum((_decimal_or_zero(line.get("total")) for line in data["lines"]), Decimal("0"))
 
 def _value_at(data, path):
     value = data
