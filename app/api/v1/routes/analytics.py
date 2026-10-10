@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.api.dependencies.auth import require_role, get_db
 from app.models.users import User
-from app.schemas.analytics import InventoryRiskDistributionResponse, ProductCreationTrendResponse, SalesCustomerType, SalesMetricsResponse, SalesTrendResponse, TopSellingProductsResponse
+from app.schemas.analytics import FiscalDebitResponse, InventoryRiskDistributionResponse, ProductCreationTrendResponse, SalesCustomerType, SalesMetricsResponse, SalesTrendResponse, TopSellingProductsResponse
 from app.schemas.inventory import AnalyticsPeriod, AnalyticsWindow
 from app.services import analytics as analytics_service
 
@@ -37,6 +37,18 @@ def sales_metrics(
         supplier_id=supplier_id,
         start_date=start_date,
         end_date=end_date,
+    )
+
+@router.get("/sales/fiscal-debit", response_model=FiscalDebitResponse, summary="Fiscal debit")
+def fiscal_debit(
+    period: AnalyticsPeriod = Query(default="30d"),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager", "admin", strict=True)),
+):
+    return analytics_service.get_fiscal_debit(
+        current_user, db, period=period, start_date=start_date, end_date=end_date
     )
 
 @router.get(

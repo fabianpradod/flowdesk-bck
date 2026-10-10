@@ -6,6 +6,7 @@ from app.models.tenant.base import Base, TENANT_SCHEMA
 from app.models.tenant.commercial import Cliente, ConfiguracionTributaria, DetalleVenta, Venta
 from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor, ProveedorProducto
 from app.models.tenant.operations import Reporte, Tarea
+from app.models.tenant.fiscal import FiscalDocument, FiscalDocumentLine, ImportBatch, ImportMapping, TaxComponent
 
 
 TENANT_MODELS = (
@@ -22,6 +23,11 @@ TENANT_MODELS = (
     Alerta,
     ChatConversation,
     ChatMessage,
+    ImportBatch,
+    ImportMapping,
+    FiscalDocument,
+    FiscalDocumentLine,
+    TaxComponent,
 )
 
 

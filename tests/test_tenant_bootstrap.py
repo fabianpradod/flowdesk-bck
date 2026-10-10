@@ -7,6 +7,7 @@ from app.models.tenant.base import Base, TENANT_SCHEMA
 from app.models.tenant.commercial import Cliente, ConfiguracionTributaria, DetalleVenta, Venta
 from app.models.tenant.inventory import Alerta, MovimientoInventario, Producto, Proveedor, ProveedorProducto
 from app.models.tenant.operations import Reporte, Tarea
+from app.models.tenant.fiscal import FiscalDocument, FiscalDocumentLine, ImportBatch, ImportMapping, TaxComponent
 from app.models.companies import Company
 from app.models.roles import Role
 from app.services.auth import register_company
@@ -88,6 +89,11 @@ def test_build_tenant_metadata_contains_expected_tables():
         "reporte",
         "chat_conversation",
         "chat_message",
+        "import_batch",
+        "import_mapping",
+        "fiscal_document",
+        "fiscal_document_line",
+        "tax_component",
     }
     tenant_models = {
         Proveedor,
@@ -101,6 +107,11 @@ def test_build_tenant_metadata_contains_expected_tables():
         ConfiguracionTributaria,
         Tarea,
         Reporte,
+        ImportBatch,
+        ImportMapping,
+        FiscalDocument,
+        FiscalDocumentLine,
+        TaxComponent,
     }
 
     assert set(table_names) == expected_table_names
