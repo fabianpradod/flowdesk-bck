@@ -75,8 +75,29 @@ por variables de entorno.
 | `ALLOWED_HOSTS` | Lista separada por comas de hosts aceptados. Vacío desactiva la validación |
 | `HSTS_MAX_AGE` | Duración de HSTS en segundos. Por defecto 63072000, dos años |
 
-Las cabeceras `X-Content-Type-Options`, `X-Frame-Options` y `Referrer-Policy`
-se envían siempre, con o sin TLS.
+Las cabeceras `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+`Content-Security-Policy`, `Cross-Origin-Resource-Policy: same-origin` y
+`Cache-Control: no-store` se envían siempre, incluidos errores 500, preflights CORS
+y rechazos de host. HSTS se envía únicamente en respuestas HTTPS con
+`FORCE_HTTPS=true`.
+
+La CSP de la API bloquea recursos y framing. `/docs`, `/redoc` y el callback OAuth
+usan una política específica: permiten los CDN de la documentación y scripts
+inline autorizados por hash SHA-256, sin `unsafe-inline` ni `unsafe-eval` para
+scripts. Las interfaces de documentación requieren estilos inline. La política
+protege el contenido servido por este backend; el frontend debe enviar su propia
+CSP.
+
+CORS permite `FRONTEND_URL` y los puertos locales 5173/3000 por defecto. En
+producción configure `CORS_ORIGINS=https://app.example.com` (lista separada por
+comas de orígenes exactos, sin paths ni barra final): reemplaza los defaults y
+excluye localhost. Un valor vacío niega todos los orígenes. Solo se aceptan
+GET/POST/PUT/PATCH/DELETE/OPTIONS y los headers Authorization/Content-Type,
+además de los headers simples CORS. CORS también cubre los errores 500, y no
+sustituye autenticación ni autorización.
+
+La evidencia de mitigaciones y el comparativo ZAP del Sprint 9 están en
+[docs/security/sprint9/README.md](docs/security/sprint9/README.md).
 
 Dos detalles que importan al desplegar:
 

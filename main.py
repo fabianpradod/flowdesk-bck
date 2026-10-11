@@ -1,11 +1,9 @@
-from fastapi import FastAPI, Request
+from fastapi import Request
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.config import FRONTEND_URL
-from app.core.https import configure_transport_security
+from app.core.https import SecureFastAPI, configure_transport_security
 from app.db.init_db import init_db
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
@@ -22,7 +20,7 @@ from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.system import router as system_router
 from app.utils.exceptions import build_error_payload, sanitize_validation_errors
 
-app = FastAPI(
+app = SecureFastAPI(
     title = "FlowDesk API",
     description = """API REST para la gestión de:
         - Autenticación
@@ -42,21 +40,8 @@ app = FastAPI(
 init_db()
 
 # ─── transport security ───────────────────────────────────────────
-# No-op unless FORCE_HTTPS / ALLOWED_HOSTS are set, so local dev is unaffected.
+# Host validation and TLS are opt-in; SecureFastAPI always applies headers and CORS.
 configure_transport_security(app)
-
-# ─── CORS ─────────────────────────────────────────────────────────
-_cors_origins = ["http://localhost:5173", "http://localhost:3000"]
-if FRONTEND_URL:
-    _cors_origins.append(FRONTEND_URL)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ─── exception handlers ───────────────────────────────────────────
 @app.exception_handler(StarletteHTTPException)
