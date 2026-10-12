@@ -25,8 +25,8 @@ def reload_config(monkeypatch):
 def test_pool_settings_default_values(reload_config):
     settings = reload_config()
 
-    assert settings.DB_POOL_SIZE == 5
-    assert settings.DB_MAX_OVERFLOW == 10
+    assert settings.DB_POOL_SIZE == 20
+    assert settings.DB_MAX_OVERFLOW == 20
     assert settings.DB_POOL_TIMEOUT == 30
     assert settings.DB_POOL_RECYCLE == 3600
 
