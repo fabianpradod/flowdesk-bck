@@ -1242,7 +1242,9 @@ def _aggregate_movement_rows(
     buckets = {}
     for row in rows:
         bucket_start = _bucket_start(row["fecha"], window)
-        bucket = buckets.setdefault(bucket_start, _empty_bucket(bucket_start, window))
+        bucket = buckets.get(bucket_start)
+        if bucket is None:
+            bucket = buckets[bucket_start] = _empty_bucket(bucket_start, window)
         quantity = _to_decimal(row["cantidad"])
         if _movement_direction(row["tipo_movimiento"]) == "in":
             bucket["inbound_quantity"] += quantity
@@ -1278,9 +1280,9 @@ def _rank_product_rows(
     products = {}
     for row in rows:
         product_id = row["producto_id"]
-        product = products.setdefault(
-            product_id,
-            {
+        product = products.get(product_id)
+        if product is None:
+            product = products[product_id] = {
                 "product_id": product_id,
                 "sku": row["sku"],
                 "nombre": row["nombre"],
@@ -1291,8 +1293,7 @@ def _rank_product_rows(
                 "ending_stock": _to_decimal(row["stock_actual"]),
                 "stock_minimo": _to_decimal(row["stock_minimo"]),
                 "stock_risk_score": Decimal("0"),
-            },
-        )
+            }
         quantity = _to_decimal(row["cantidad"])
         if _movement_direction(row["tipo_movimiento"]) == "in":
             product["inbound_quantity"] += quantity
@@ -1301,6 +1302,9 @@ def _rank_product_rows(
         product["net_quantity"] = product["inbound_quantity"] - product["outbound_quantity"]
         product["movement_count"] += 1
         product["ending_stock"] = _to_decimal(row["stock_resultante"])
+
+    # The score only depends on the final totals, so it is computed once per product.
+    for product in products.values():
         product["stock_risk_score"] = _stock_risk_score(
             product["ending_stock"],
             product["stock_minimo"],

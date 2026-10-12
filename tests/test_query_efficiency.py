@@ -122,3 +122,39 @@ def test_client_response_does_not_revalidate_stored_emails(monkeypatch):
 def test_client_input_still_validates_email():
     with pytest.raises(ValidationError):
         ClientCreate(nombre="Cliente", correo="not-an-email")
+
+
+# --- inventory analytics ------------------------------------------------------
+
+
+def movement_rows(count, start=datetime(2026, 1, 1)):
+    return [
+        {
+            "producto_id": UUID(int=index % 3 + 1),
+            "tipo_movimiento": "entrada_manual" if index % 2 else "salida_manual",
+            "fecha": start + timedelta(days=index % 50),
+            "cantidad": Decimal("2"),
+            "stock_resultante": Decimal(index),
+            "sku": f"SKU-{index % 3}",
+            "nombre": f"Producto {index % 3}",
+            "stock_actual": Decimal("10"),
+            "stock_minimo": Decimal("5"),
+        }
+        for index in range(count)
+    ]
+
+
+def test_aggregation_builds_each_bucket_once(monkeypatch):
+    created = []
+    original = inventory_service._empty_bucket
+
+    def counting(bucket_start, window):
+        created.append(bucket_start)
+        return original(bucket_start, window)
+
+    monkeypatch.setattr(inventory_service, "_empty_bucket", counting)
+
+    points = inventory_service._aggregate_movement_rows(movement_rows(600), window="month", include_previous=True)
+
+    assert len(points) == 2
+    assert len(created) == 2
