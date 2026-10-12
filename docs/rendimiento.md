@@ -4,6 +4,25 @@ Revisión de la gestión de conexiones y de las consultas del backend para mante
 tiempos de respuesta adecuados con alta concurrencia. Medido sobre `main` en
 `f5fe052`, octubre de 2026.
 
+## Resumen
+
+- **Bloqueo con alta concurrencia.** Desde unas 55 solicitudes simultáneas, los 40
+  hilos de la API quedaban esperando una conexión que tenían otras solicitudes, que
+  a su vez esperaban un hilo. La API dejaba de responder, devolvía 500 cada 30 s y
+  no se recuperaba al bajar la carga. Se corrigió con el pool configurable (20 + 20
+  conexiones por defecto) y un límite de solicitudes dentro de la aplicación igual
+  al tamaño del pool.
+- **Trabajo por solicitud.** La API es un solo proceso de Python y la base de datos
+  casi no trabaja: el costo está en convertir filas y validar respuestas. Se
+  quitaron 2 consultas por solicitud en la autenticación, una validación de correo
+  repetida en la lista de clientes, trabajo por fila en la analítica y un N+1 en el
+  historial de compras. El costo medio por solicitud bajó de 13.1 a 9.7 ms.
+- **Resultado.** Con 100 usuarios simultáneos la API pasó de detenerse a atender
+  unas 100 solicitudes por segundo sin errores. Con 25 y 50 usuarios el
+  rendimiento subió entre 34 y 54 % y el p95 bajó entre 12 y 33 %.
+- **Pendiente.** El p95 sigue sobre el objetivo de 200 ms. Llegar ahí pide paginar
+  la lista completa de movimientos y más de un proceso (ver recomendaciones).
+
 ## Antecedentes
 
 El trabajo previo con k6 está en la rama `test/non-functional-tests`
@@ -234,6 +253,77 @@ El p95 de 2 s con 100 usuarios no es un bloqueo sino la fila: un proceso atiende
 unas 75 solicitudes por segundo y 100 solicitudes simultáneas esperan su turno.
 Bajarlo requiere menos trabajo de Python por solicitud o más procesos.
 
+## Cambios en el pool
+
+- `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT` y `DB_POOL_RECYCLE` se leen
+  del entorno (`app/core/config.py`). Por defecto 20, 20, 30 s y 3600 s.
+- 20 + 20 = 40 conexiones, las mismas que hilos tiene la API. Con el límite de
+  admisión, 20 + 20 y 40 + 0 midieron lo mismo (68 y 69 solicitudes/s con 100
+  usuarios, sin errores); 20 + 20 abrió solo 59 conexiones en toda la corrida y deja
+  menos conexiones ociosas cuando no hay carga.
+- `PoolAdmissionMiddleware` (`app/core/pool_admission.py`) deja entrar como máximo
+  `DB_POOL_SIZE + DB_MAX_OVERFLOW` solicitudes a la vez. Las demás esperan su turno
+  en el event loop, sin ocupar hilo ni conexión. `/health` queda fuera del límite.
+  Se agrega antes de las validaciones de host y HTTPS, para que una solicitud
+  rechazada no espere turno.
+- `tests/test_pool_admission.py` reproduce el bloqueo en pequeño: 4 hilos, un pool
+  de 2 conexiones y 40 solicitudes. Sin el límite, 36 terminan en 500 por timeout
+  del pool; con el límite, las 40 responden 200.
+
+Una solicitud ocupa su lugar hasta enviar la respuesta completa, igual que ya
+ocupaba su conexión. Un chat de IA puede ocupar uno hasta 60 s, con un máximo de 8
+chats por proceso, así que siempre quedan al menos 32 lugares para el resto.
+
+## Consultas costosas
+
+`pg_stat_statements` durante la carga, `EXPLAIN ANALYZE` y un perfil de Python por
+endpoint mostraron que el tiempo no está en PostgreSQL sino en el número de viajes
+a la base y en el trabajo por fila en Python.
+
+| Hallazgo | Medición | Cambio |
+|---|---|---|
+| La autenticación hace 3 consultas por solicitud | usuario, empresa y rol: 7,515, 7,515 y 7,217 llamadas por corrida | `get_current_user` carga empresa y rol en la misma consulta |
+| La lista de clientes valida otra vez cada correo guardado | 10 de los 14.6 ms de `GET /commercial/clients` con 300 clientes | `ClientResponse.correo` es texto; la entrada sigue validando el correo y la respuesta lo sigue normalizando |
+| La analítica por periodo arma un acumulador nuevo por fila y lo descarta | 600 acumuladores para 2 meses, cada uno con `strftime` y 5 `Decimal` | Un acumulador por periodo y el puntaje de riesgo una vez por producto |
+| La analítica mensual y de tendencia lee columnas que no usa | id, SKU, nombre y stock del producto convertidos en cada una de unas 10,000 filas | Leen 4 columnas, sin JOIN con producto |
+| El historial de compras de un cliente hace un N+1 | 2 consultas más 2 por venta: 42 con 20 ventas | 3 consultas: cliente, página de ventas y todas sus líneas |
+
+`tests/test_query_efficiency.py` cuenta las consultas contra SQLite y cubre cada
+cambio. Además se compararon 92 respuestas de `main` y de la rama sobre la misma
+base: son idénticas.
+
+Costo propio de cada endpoint, mediana de 30 llamadas sin concurrencia:
+
+| Endpoint | main ms | rama ms | Cambio |
+|---|---|---|---|
+| `GET /inventory/analytics/monthly` | 61.6 | 27.0 | -56 % |
+| `GET /commercial/clients` | 14.6 | 3.1 | -79 % |
+| `GET /inventory/analytics/products` | 13.2 | 11.3 | -14 % |
+| `GET /inventory/analytics/trend` | 10.7 | 6.3 | -41 % |
+| `GET /commercial/clients/{id}/purchases` | 9.5 | 2.8 | -71 % |
+| `GET /inventory/movements` (todos) | 215.4 | 208.9 | sin cambio |
+| Costo medio ponderado de la mezcla | 13.1 | 9.7 | -26 % |
+
+### Lo que no se cambió
+
+- **`GET /inventory/movements` sin filtro** devuelve los 20,000 movimientos (7.2 MB,
+  209 ms). Es el 2 % de las solicitudes y ya el 43 % del tiempo del servidor.
+  Corregirlo requiere paginar, lo que cambia el contrato con el frontend.
+- **Índices.** Con este volumen las consultas filtradas recorren la tabla completa
+  en muy poco tiempo y un índice no cambiaría el resultado:
+
+  | Consulta | Plan | Tiempo |
+  |---|---|---|
+  | Movimientos de un producto (20,000 filas) | Seq Scan | 0.9 ms |
+  | Analítica de 6 meses (devuelve la mitad de la tabla) | Seq Scan | 3.9 ms |
+  | Ventas de un cliente (5,000 filas) | Seq Scan | 0.3 ms |
+  | Líneas de una página de ventas (15,000 filas) | Seq Scan | 1.1 ms |
+
+- **Agregar la analítica en SQL.** El análisis mensual sigue en 27 ms porque trae
+  unas 10,000 filas a Python. Pasar la suma a `GROUP BY` en PostgreSQL lo bajaría
+  más, pero las pruebas de analítica actuales alimentan filas crudas al servicio y
+  habría que reescribirlas.
+
 ## Antes y después
 
 Mismo escenario, misma base y misma máquina. Dos corridas por versión; cada celda
@@ -261,7 +351,7 @@ En la corrida completa (2 min 25 s), `main` completó 8,076 y 7,727 solicitudes 
 
 La segunda fila se midió con el código de `main`, cambiando el pool y agregando el
 límite desde fuera del código. El pool y el límite quitan el bloqueo; las
-optimizaciones de consultas suben el rendimiento cerca de un 40 % y bajan el p95.
+optimizaciones de consultas suben el rendimiento entre 35 y 55 % y bajan el p95.
 
 ### p95 por endpoint con 50 usuarios
 
@@ -301,3 +391,24 @@ completa por segundo: con 100 usuarios, 100 / 108 = 0.93 s. Un proceso atiende
 unas 105 solicitudes por segundo con esta mezcla, así que un p95 de 200 ms con 100
 solicitudes simultáneas pide del orden de 500 por segundo: varios procesos además
 de menos trabajo por solicitud (ver recomendaciones).
+
+## Recomendaciones
+
+1. **Paginar `GET /inventory/movements`** (`limit` y `offset`, como ya tiene el
+   historial de compras) y que el frontend pida páginas. Es el mayor consumo de CPU
+   que queda.
+2. **Más de un proceso.** Un proceso de Python usa un solo núcleo. Con `--workers`
+   o réplicas, cada proceso tiene su propio pool y su propio límite: con el valor
+   por defecto son 40 conexiones por proceso, y PostgreSQL acepta 100 en la imagen
+   de Compose. Dos procesos caben; para más, bajar `DB_POOL_SIZE` y
+   `DB_MAX_OVERFLOW` o poner PgBouncer delante.
+3. **Analítica en SQL** cuando se reescriban sus pruebas.
+4. **Índices cuando crezcan los datos**: `movimiento_inventario (producto_id,
+   fecha)`, `venta (cliente_id, fecha)` y `detalle_venta (venta_id)`. Con unas 10
+   veces el volumen actual, cada recorrido completo pasaría a unos 10 ms
+   (estimación lineal).
+5. **Medir en EC2** con el mismo escenario. Las cifras de este documento son de una
+   máquina local y sirven para comparar, no como latencia de producción.
+6. **Un escenario con pausas entre acciones** si el objetivo se quiere expresar en
+   usuarios reales. Sin pausas, 100 usuarios virtuales son 100 solicitudes
+   simultáneas todo el tiempo.

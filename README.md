@@ -306,6 +306,12 @@ pytest -q
 Las pruebas no requieren un PostgreSQL real: reemplazan la inicialización y las
 dependencias de persistencia cuando corresponde.
 
+### Pruebas de carga
+
+`tests/load/` tiene el escenario de k6, el script que llena una base local
+desechable y el que resume los resultados. El método, la línea base y las
+optimizaciones del sprint 9 están en [docs/rendimiento.md](docs/rendimiento.md).
+
 ### Análisis inteligente — `/api/v1/ai`
 
 El endpoint autenticado `POST /analysis` utiliza la API compatible con OpenAI de
