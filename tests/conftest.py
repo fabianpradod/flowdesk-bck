@@ -42,6 +42,9 @@ class FakeQuery:
         self.criteria.extend(criteria)
         return self
 
+    def options(self, *_args, **_kwargs):
+        return self
+
     def join(self, *_args, **_kwargs):
         return self
 

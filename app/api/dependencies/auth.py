@@ -1,6 +1,6 @@
 from typing import Generator
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
@@ -32,8 +32,15 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user_id is None:
         raise AppError(status_code=401, message="Invalid or expired token")
 
-    user = db.query(User).filter(User.id == user_id).first()
-    
+    # Every request reads the company (tenant schema) and the role (guards), so load
+    # them with the user instead of two lazy queries afterwards.
+    user = (
+        db.query(User)
+        .options(joinedload(User.company), joinedload(User.role))
+        .filter(User.id == user_id)
+        .first()
+    )
+
     if not user:
         raise AppError(
             status_code=401,
