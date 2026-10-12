@@ -51,7 +51,7 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 | `DB_PASSWORD` | sí | Contraseña de la base |
 | `DB_PORT` | no | Puerto, 5432 por defecto |
 | `DB_POOL_SIZE` | no | Conexiones fijas del pool por proceso, 20 por defecto |
-| `DB_MAX_OVERFLOW` | no | Conexiones extra sobre el pool, 20 por defecto |
+| `DB_MAX_OVERFLOW` | no | Conexiones extra sobre el pool, 20 por defecto. La suma con `DB_POOL_SIZE` es también el máximo de solicitudes que la API atiende a la vez; las demás esperan turno |
 | `DB_POOL_TIMEOUT` | no | Segundos de espera por una conexión libre, 30 por defecto |
 | `DB_POOL_RECYCLE` | no | Segundos antes de renovar una conexión, 3600 por defecto |
 | `SECRET_KEY` | sí | Firma JWT; use un valor aleatorio largo |
