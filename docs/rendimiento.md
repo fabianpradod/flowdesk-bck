@@ -151,3 +151,85 @@ endpoints se llevan más de la mitad del tiempo: la lista completa de movimiento
 El objetivo de p95 menor a 200 ms no se cumple en ningún nivel: con 25 usuarios
 el p95 es de 3 a 4 veces el objetivo y con 100 la API deja de responder. El
 segundo problema es más grave que el primero, porque no se recupera solo.
+
+## Configuración de SQLAlchemy y pool de conexiones
+
+### Configuración en main
+
+- `app/core/database.py` crea el engine con `pool_pre_ping=True` y
+  `pool_recycle=3600`, sin tamaño de pool. Quedan los valores por defecto de
+  `QueuePool`: 5 conexiones fijas, 10 extra y 30 s de espera máxima. Un proceso
+  de la API abre como máximo 15 conexiones.
+- `get_db` entrega una `Session` por solicitud. La conexión se toma del pool con
+  la primera consulta, que es la de `get_current_user`, y vuelve al pool cuando
+  la dependencia cierra la sesión. En FastAPI 0.119 eso pasa después de enviar
+  la respuesta completa. Cada solicitud retiene su conexión desde la
+  autenticación hasta el último byte de la respuesta.
+- `get_current_user` hace tres consultas por solicitud: el usuario y, por carga
+  diferida, su empresa y su rol (7,515, 7,515 y 7,217 llamadas en la corrida 2).
+  Cada una tarda unos 0.004 ms en PostgreSQL.
+- `pool_pre_ping` agrega un ping por cada préstamo de conexión. Es barato contra
+  una base local y protege de conexiones cortadas, así que se mantiene.
+- Las 68 rutas son funciones `def` síncronas. FastAPI ejecuta cada dependencia
+  síncrona, el endpoint y la validación de la respuesta como pasos separados en
+  el pool de hilos de AnyIO, que tiene 40 hilos.
+
+### Dónde se va el tiempo
+
+En una corrida de 150 s, PostgreSQL ejecutó consultas durante 17.4 s en total.
+El proceso de la API, en cambio, usó un núcleo completo todo el tiempo (1.05 s de
+CPU por segundo, medido). El cuello de botella es el trabajo en Python
+(convertir filas, validar y serializar respuestas), no la base de datos. Un solo
+proceso de Python ejecuta ese trabajo de a una solicitud a la vez.
+
+### El bloqueo del pool
+
+Con la API instrumentada (muestras cada 0.5 s del pool y de los hilos) se ve qué
+pasa al llegar a 100 usuarios:
+
+| Segundo | Conexiones prestadas | Hilos esperando conexión | Préstamos en 0.5 s | Espera máxima ms | CPU |
+|---|---|---|---|---|---|
+| 20 (25 usuarios) | 14 | 6 | 22 | 1,084 | 1.03 |
+| 60 (50 usuarios) | 15 | 31 | 79 | 888 | 1.08 |
+| 93 (rampa a 100) | 15 | 33 | 57 | 1,424 | 1.06 |
+| 96 | 15 | 40 | 0 | | 0.01 |
+| 110 | 15 | 40 | 0 | | 0.00 |
+| 124 | 15 | 40 | 14 | 30,005 | 0.21 |
+| 140 | 15 | 40 | 0 | | 0.00 |
+| 180 (k6 ya terminó) | 15 | 40 | 0 | | 0.00 |
+
+El mecanismo:
+
+1. Una solicitud toma una conexión en `get_current_user` y suelta el hilo.
+2. Para el siguiente paso (el chequeo de rol, el endpoint o la validación de la
+   respuesta) necesita otro hilo, y se pone en la fila con la conexión en la mano.
+3. Mientras tanto, solicitudes nuevas toman los hilos libres y se quedan
+   bloqueadas en `get_current_user` esperando una conexión.
+4. Cuando los 40 hilos están esperando una conexión y las 15 conexiones son de
+   solicitudes que esperan un hilo, nadie puede avanzar. Solo se destraba cuando
+   vence la espera de 30 s del pool, con errores 500, y vuelve a trabarse.
+
+Pasa desde unas 55 solicitudes simultáneas (15 conexiones más 40 hilos). Peor
+aún, el bloqueo sigue después de que la carga termina, porque las solicitudes
+que los clientes ya abandonaron siguen en la fila.
+
+### Experimentos
+
+Mismo escenario, cambiando solo la configuración del pool desde fuera del código.
+
+| Configuración | Primer bloqueo | Muestras bloqueadas | Con 100 usuarios |
+|---|---|---|---|
+| 5 + 10 (main) | segundo 95 | 169 de 356 | 0 solicitudes/s, errores 500 |
+| 20 + 20 | segundo 108 | 57 de 278 | 24 solicitudes/s, p95 30.9 s, 7 % de errores |
+| 20 + 20 y un máximo de 40 solicitudes dentro de la aplicación | nunca | 0 de 272 | 70 solicitudes/s, p95 2.0 s, 0 errores |
+
+Un pool más grande solo mueve el umbral (a 40 + 40 = 80 solicitudes). Lo que
+elimina el bloqueo es no dejar entrar más solicitudes de las que el pool puede
+atender: si dentro de la aplicación nunca hay más solicitudes que conexiones,
+ninguna espera una conexión con un hilo tomado, y las demás esperan en el event
+loop sin ocupar hilos ni conexiones. Con eso ningún hilo esperó una conexión en
+toda la corrida.
+
+El p95 de 2 s con 100 usuarios no es un bloqueo sino la fila: un proceso atiende
+unas 75 solicitudes por segundo y 100 solicitudes simultáneas esperan su turno.
+Bajarlo requiere menos trabajo de Python por solicitud o más procesos.
