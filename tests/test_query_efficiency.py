@@ -83,3 +83,42 @@ def test_current_user_loads_company_and_role_in_one_query(auth_db):
 
     assert (user.company.schema_name, user.role.name) == ("tenant_" + "a" * 32, "manager")
     assert len(selects) == 1
+
+
+# --- client listing -----------------------------------------------------------
+
+
+def client_row(**overrides):
+    row = {
+        "id": uuid4(),
+        "nombre": "Cliente",
+        "telefono": None,
+        "correo": "cliente@example.com",
+        "direccion": None,
+        "is_active": True,
+        "created_at": datetime(2026, 1, 1),
+        "updated_at": datetime(2026, 1, 1),
+    }
+    return {**row, **overrides}
+
+
+def test_client_response_keeps_email_normalization():
+    response = ClientResponse.model_validate(client_row(correo="  Mixed.Case@Example.COM "))
+
+    assert response.correo == "mixed.case@example.com"
+
+
+def test_client_response_does_not_revalidate_stored_emails(monkeypatch):
+    import email_validator
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("stored emails were validated again on output")
+
+    monkeypatch.setattr(email_validator, "validate_email", fail)
+
+    assert ClientResponse.model_validate(client_row()).correo == "cliente@example.com"
+
+
+def test_client_input_still_validates_email():
+    with pytest.raises(ValidationError):
+        ClientCreate(nombre="Cliente", correo="not-an-email")
