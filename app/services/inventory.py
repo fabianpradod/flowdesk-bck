@@ -985,7 +985,7 @@ def get_monthly_behavior(
     end_date: date | None = None,
 ) -> dict:
     analytics_range = _resolve_analytics_range(period, start_date, end_date)
-    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id)
+    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id, with_product=False)
     points = _aggregate_movement_rows(rows, window="month", include_previous=True)
     return {
         "period": period,
@@ -1007,7 +1007,7 @@ def get_inventory_trend(
     end_date: date | None = None,
 ) -> dict:
     analytics_range = _resolve_analytics_range(period, start_date, end_date)
-    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id)
+    rows = _fetch_analytics_rows(current_user, db, analytics_range, product_id, with_product=False)
     points = _aggregate_movement_rows(rows, window=window, include_previous=False)
     return {
         "period": period,
@@ -1177,23 +1177,33 @@ def _fetch_analytics_rows(
     db: Session,
     analytics_range: dict,
     product_id: UUID | None,
+    *,
+    with_product: bool = True,
 ) -> list[dict]:
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]
     movements = tables["movimiento_inventario"]
-    query = (
-        select(
+    # Period buckets only use these four columns. Every extra column is converted in
+    # Python for each of the thousands of rows a long period returns.
+    columns = [
+        movements.c.tipo_movimiento,
+        movements.c.fecha,
+        movements.c.cantidad,
+        movements.c.stock_resultante,
+    ]
+    source = movements
+    if with_product:
+        columns += [
             movements.c.producto_id,
-            movements.c.tipo_movimiento,
-            movements.c.fecha,
-            movements.c.cantidad,
-            movements.c.stock_resultante,
             products.c.sku,
             products.c.nombre,
             products.c.stock_actual,
             products.c.stock_minimo,
-        )
-        .select_from(movements.join(products, movements.c.producto_id == products.c.id))
+        ]
+        source = movements.join(products, movements.c.producto_id == products.c.id)
+    query = (
+        select(*columns)
+        .select_from(source)
         .where(movements.c.fecha >= analytics_range["start"])
         .where(movements.c.fecha <= analytics_range["end"])
         .order_by(movements.c.fecha.asc())

@@ -158,3 +158,35 @@ def test_aggregation_builds_each_bucket_once(monkeypatch):
 
     assert len(points) == 2
     assert len(created) == 2
+
+
+class CaptureDB:
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, statement, *_args, **_kwargs):
+        self.statements.append(str(statement))
+        return self
+
+    def mappings(self):
+        return []
+
+
+@pytest.mark.parametrize(
+    "service, kwargs, joins_products",
+    [
+        (inventory_service.get_monthly_behavior, {"period": "6m"}, False),
+        (inventory_service.get_inventory_trend, {"period": "30d", "window": "day"}, False),
+        (inventory_service.get_product_analytics, {"period": "30d", "sort_by": "outbound", "limit": 10}, True),
+    ],
+)
+def test_movement_analytics_only_read_the_columns_they_use(monkeypatch, service, kwargs, joins_products):
+    tables = get_tenant_tables("tenant_" + "b" * 32)
+    monkeypatch.setattr(inventory_service, "_get_tenant_tables_for_user", lambda _user: tables)
+    db = CaptureDB()
+
+    service(object(), db, **kwargs)
+
+    (statement,) = db.statements
+    assert ("JOIN" in statement) == joins_products
+    assert ("stock_minimo" in statement) == joins_products
