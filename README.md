@@ -50,6 +50,10 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 | `DB_USERNAME` | sí | Usuario de la base |
 | `DB_PASSWORD` | sí | Contraseña de la base |
 | `DB_PORT` | no | Puerto, 5432 por defecto |
+| `DB_POOL_SIZE` | no | Conexiones fijas del pool por proceso, 5 por defecto |
+| `DB_MAX_OVERFLOW` | no | Conexiones extra sobre el pool, 10 por defecto |
+| `DB_POOL_TIMEOUT` | no | Segundos de espera por una conexión libre, 30 por defecto |
+| `DB_POOL_RECYCLE` | no | Segundos antes de renovar una conexión, 3600 por defecto |
 | `SECRET_KEY` | sí | Firma JWT; use un valor aleatorio largo |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | no | Duración de access tokens |
 | `SUPERADMIN_EMAIL` | sí | Correo del superadministrador inicial |
