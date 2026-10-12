@@ -190,3 +190,76 @@ def test_movement_analytics_only_read_the_columns_they_use(monkeypatch, service,
     (statement,) = db.statements
     assert ("JOIN" in statement) == joins_products
     assert ("stock_minimo" in statement) == joins_products
+
+
+# --- client purchase history --------------------------------------------------
+
+
+@pytest.fixture
+def sales_db(monkeypatch):
+    real = get_tenant_tables("tenant_" + "c" * 32)
+    metadata = MetaData()
+    tables = {
+        name: Table(
+            name,
+            metadata,
+            *[
+                Column(column.name, Uuid() if isinstance(column.type, Uuid) else column.type, primary_key=column.primary_key)
+                for column in real[name].columns
+            ],
+        )
+        for name in ("cliente", "venta", "detalle_venta")
+    }
+    engine = sqlite_engine()
+    metadata.create_all(engine)
+    monkeypatch.setattr(commercial_service, "_tenant_tables", lambda _user: tables)
+
+    client_id = uuid4()
+    now = datetime(2026, 10, 1)
+    with engine.begin() as connection:
+        connection.execute(insert(tables["cliente"]), [client_row(id=client_id, nombre="Ana")])
+        for day in range(3):
+            sale_id = UUID(int=100 + day)
+            connection.execute(
+                insert(tables["venta"]),
+                [{
+                    "id": sale_id, "usuario_id": uuid4(), "cliente_id": client_id, "fecha": now + timedelta(days=day),
+                    "subtotal": Decimal("10"), "descuento": Decimal("0"), "impuesto": Decimal("1.2"),
+                    "tasa_impuesto": Decimal("12"), "es_exenta": False, "total": Decimal("11.2"),
+                    "estado": "completada", "created_at": now, "updated_at": now,
+                }],
+            )
+            connection.execute(
+                insert(tables["detalle_venta"]),
+                [
+                    {
+                        "id": UUID(int=1000 + 10 * day + line), "venta_id": sale_id, "producto_id": uuid4(),
+                        "cantidad": Decimal("1"), "precio_unitario": Decimal("5"), "subtotal": Decimal("5"),
+                    }
+                    for line in (1, 0)
+                ],
+            )
+    with Session(engine) as db:
+        yield engine, db, client_id
+
+
+def test_purchase_history_keeps_order_and_items(sales_db):
+    _engine, db, client_id = sales_db
+
+    sales = commercial_service.list_client_purchases(client_id, object(), db, limit=2)
+
+    assert [sale["id"] for sale in sales] == [UUID(int=102), UUID(int=101)]
+    assert [[item["id"] for item in sale["items"]] for sale in sales] == [
+        [UUID(int=1020), UUID(int=1021)],
+        [UUID(int=1010), UUID(int=1011)],
+    ]
+    assert all(sale["cliente_nombre"] == "Ana" and sale["consumidor_final"] is False for sale in sales)
+
+
+def test_purchase_history_query_count_does_not_grow_with_sales(sales_db):
+    engine, db, client_id = sales_db
+    selects = count_selects(engine)
+
+    commercial_service.list_client_purchases(client_id, object(), db, limit=3)
+
+    assert len(selects) == 3

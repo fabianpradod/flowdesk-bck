@@ -438,20 +438,38 @@ def list_client_purchases(
     tables = _tenant_tables(current_user)
     clients = tables["cliente"]
     sales = tables["venta"]
+    sale_items = tables["detalle_venta"]
     client = db.execute(select(clients).where(clients.c.id == client_id)).mappings().first()
     if client is None:
         raise AppError(status_code=404, message="Client not found")
-    sale_ids = [
-        row[0]
-        for row in db.execute(
-            select(sales.c.id)
-            .where(sales.c.cliente_id == client_id)
-            .order_by(sales.c.fecha.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+    page = db.execute(
+        select(sales)
+        .where(sales.c.cliente_id == client_id)
+        .order_by(sales.c.fecha.desc())
+        .limit(limit)
+        .offset(offset)
+    ).mappings().all()
+    if not page:
+        return []
+
+    # Same shape as get_sale, with the items of the whole page in one query instead
+    # of two queries per sale.
+    items = {}
+    for row in db.execute(
+        select(sale_items)
+        .where(sale_items.c.venta_id.in_([sale["id"] for sale in page]))
+        .order_by(sale_items.c.id.asc())
+    ).mappings():
+        items.setdefault(row["venta_id"], []).append(dict(row))
+    return [
+        {
+            **sale,
+            "cliente_nombre": client["nombre"],
+            "consumidor_final": False,
+            "items": items.get(sale["id"], []),
+        }
+        for sale in page
     ]
-    return [get_sale(sale_id, current_user, db, client_name=client["nombre"]) for sale_id in sale_ids]
 
 
 PENDING_SALE_STATES = ("borrador",)
