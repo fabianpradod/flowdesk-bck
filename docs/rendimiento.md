@@ -233,3 +233,71 @@ toda la corrida.
 El p95 de 2 s con 100 usuarios no es un bloqueo sino la fila: un proceso atiende
 unas 75 solicitudes por segundo y 100 solicitudes simultáneas esperan su turno.
 Bajarlo requiere menos trabajo de Python por solicitud o más procesos.
+
+## Antes y después
+
+Mismo escenario, misma base y misma máquina. Dos corridas por versión; cada celda
+muestra corrida 1 / corrida 2.
+
+| Usuarios | Versión | Solicitudes/s | p50 ms | p95 ms | p99 ms | Errores |
+|---|---|---|---|---|---|---|
+| 25 | main | 79 / 79 | 242 / 269 | 715 / 629 | 924 / 877 | 0 % |
+| 25 | rama | 110 / 106 | 158 / 186 | 540 / 553 | 758 / 865 | 0 % |
+| 50 | main | 74 / 71 | 550 / 608 | 1,325 / 1,339 | 1,787 / 1,782 | 0 % |
+| 50 | rama | 114 / 98 | 397 / 435 | 893 / 1,026 | 1,073 / 1,447 | 0 % |
+| 100 | main | se detiene | | | | 500 por timeout del pool |
+| 100 | rama | 108 / 96 | 876 / 985 | 1,505 / 1,696 | 1,847 / 2,111 | 0 % |
+
+En la corrida completa (2 min 25 s), `main` completó 8,076 y 7,727 solicitudes con
+86 y 87 fallidas; la rama completó 16,683 y 15,679 sin ninguna falla.
+
+### Qué aportó cada cambio
+
+| Configuración | 25 usuarios | 50 usuarios | 100 usuarios |
+|---|---|---|---|
+| main | 79 req/s, p95 715 ms | 74 req/s, p95 1,325 ms | se detiene |
+| Solo pool 20 + 20 y límite de admisión | 72 req/s, p95 728 ms | 72 req/s, p95 1,190 ms | 70 req/s, p95 1,969 ms, 0 errores |
+| Rama completa (pool, límite y consultas) | 110 req/s, p95 540 ms | 114 req/s, p95 893 ms | 108 req/s, p95 1,505 ms, 0 errores |
+
+La segunda fila se midió con el código de `main`, cambiando el pool y agregando el
+límite desde fuera del código. El pool y el límite quitan el bloqueo; las
+optimizaciones de consultas suben el rendimiento cerca de un 40 % y bajan el p95.
+
+### p95 por endpoint con 50 usuarios
+
+| Endpoint | main ms | rama ms | Cambio corrida 1 | Cambio corrida 2 |
+|---|---|---|---|---|
+| `GET /inventory/movements` (todos) | 1,691 | 1,139 | -33 % | -25 % |
+| `GET /commercial/clients/{id}/purchases` | 1,521 | 816 | -46 % | -26 % |
+| `GET /inventory/analytics/monthly` | 1,445 | 974 | -33 % | -16 % |
+| `GET /inventory/analytics/trend` | 1,436 | 882 | -39 % | -22 % |
+| `GET /commercial/clients` | 1,399 | 863 | -38 % | -23 % |
+| `GET /commercial/sales/{id}` | 1,394 | 746 | -46 % | -31 % |
+| `GET /inventory/supplier-products` | 1,371 | 747 | -46 % | -25 % |
+| `GET /inventory/products` | 1,325 | 933 | -30 % | -21 % |
+| `GET /inventory/movements?product_id=` | 1,309 | 856 | -35 % | -16 % |
+| `POST /inventory/movements` | 1,302 | 911 | -30 % | -19 % |
+| `GET /analytics/sales/trend` | 1,279 | 883 | -31 % | -24 % |
+| `GET /inventory/alerts` | 1,270 | 739 | -42 % | -13 % |
+| `GET /analytics/sales/top-products` | 1,245 | 969 | -22 % | -26 % |
+| `GET /analytics/sales/metrics` | 1,222 | 826 | -32 % | -31 % |
+| `GET /inventory/suppliers` | 1,194 | 874 | -27 % | -40 % |
+| `GET /inventory/history` | 1,185 | 855 | -28 % | -33 % |
+| `GET /inventory/metrics` | 1,161 | 870 | -25 % | -23 % |
+| `GET /tasks` | 1,132 | 852 | -25 % | -38 % |
+| `GET /inventory/analytics/products` | 1,012 | 929 | -8 % | -27 % |
+| `GET /health` (control) | 136 | 230 | +69 % | +11 % |
+
+Todos los endpoints con base de datos bajan, también los que no se tocaron, porque
+la fila delante de cada solicitud se mueve más rápido. `GET /health` no usa la base
+y sube un poco: comparte el mismo núcleo con un 40 % más de solicitudes por
+segundo.
+
+### El objetivo de 200 ms
+
+El p95 sigue por encima de 200 ms. Con solicitudes sin pausa, el tiempo medio de
+respuesta es el número de solicitudes en curso dividido entre las que el servidor
+completa por segundo: con 100 usuarios, 100 / 108 = 0.93 s. Un proceso atiende
+unas 105 solicitudes por segundo con esta mezcla, así que un p95 de 200 ms con 100
+solicitudes simultáneas pide del orden de 500 por segundo: varios procesos además
+de menos trabajo por solicitud (ver recomendaciones).
