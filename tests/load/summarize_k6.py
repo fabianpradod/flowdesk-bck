@@ -4,7 +4,7 @@ Only requests made while a load level was held are counted (stage tag 25, 50 or
 100); setup and ramps are skipped so each level is measured at a steady load.
 
     python tests/load/summarize_k6.py summary run.csv --json run.json
-    python tests/load/summarize_k6.py compare before.json after.json
+    python tests/load/summarize_k6.py compare before.json after.json --stage 50
 """
 import argparse
 import csv
@@ -105,7 +105,7 @@ def _change(before: float, after: float) -> str:
     return f"{100 * (after - before) / before:+.0f}%"
 
 
-def compare_table(before: dict, after: dict) -> str:
+def compare_table(before: dict, after: dict, endpoint_stage: str | None = None) -> str:
     stages = [stage for stage in STAGES if stage in before and stage in after]
     lines = [
         "| VUs | metric | before | after | change |",
@@ -116,7 +116,9 @@ def compare_table(before: dict, after: dict) -> str:
         for metric in ("rps", "p50", "p95", "p99", "errors"):
             lines.append(f"| {stage} | {metric} | {b[metric]:.1f} | {a[metric]:.1f} | {_change(b[metric], a[metric])} |")
 
-    last = stages[-1]
+    # A level where one run stalled has no useful per endpoint numbers, so the
+    # endpoint table can be pinned to another level.
+    last = endpoint_stage or stages[-1]
     lines += [
         "",
         f"| endpoint | p95 before @{last} | p95 after @{last} | change |",
@@ -138,6 +140,7 @@ def main() -> None:
     compare_cmd = commands.add_parser("compare")
     compare_cmd.add_argument("before", type=Path)
     compare_cmd.add_argument("after", type=Path)
+    compare_cmd.add_argument("--stage", choices=STAGES, help="Load level for the endpoint table (default: highest)")
     args = parser.parse_args()
 
     if args.command == "summary":
@@ -148,7 +151,7 @@ def main() -> None:
     else:
         before = json.loads(args.before.read_text())
         after = json.loads(args.after.read_text())
-        print(compare_table(before, after))
+        print(compare_table(before, after, args.stage))
 
 
 if __name__ == "__main__":

@@ -70,3 +70,16 @@ def test_compare_reports_change_in_percent(k6_csv):
     table = summarize_k6.compare_table(before, after)
 
     assert "-50%" in table
+
+
+def test_compare_endpoint_table_can_use_a_given_stage(k6_csv):
+    before = summarize_k6.summarize(k6_csv)
+    after = summarize_k6.summarize(k6_csv)
+    before["100"] = after["100"] = {"all": dict(before["25"]["all"]), "products": dict(before["25"]["products"])}
+    after["25"]["products"]["p95"] = 2 * before["25"]["products"]["p95"]
+
+    assert "p95 before @100" in summarize_k6.compare_table(before, after)
+    table = summarize_k6.compare_table(before, after, endpoint_stage="25")
+
+    assert "p95 before @25" in table
+    assert "+100%" in table.split("p95 before @25")[1]
