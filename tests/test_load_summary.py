@@ -59,7 +59,22 @@ def test_summary_counts_failures_and_rate(k6_csv):
     overall = summary["25"]["all"]
     assert overall["requests"] == 5
     assert overall["errors"] == pytest.approx(20.0)
-    assert overall["rps"] == pytest.approx(1.0)
+    assert overall["rps"] == pytest.approx(0.1666666667)
+
+
+@pytest.mark.parametrize(
+    "timestamps, expected",
+    [([100], 0.0333333333), ([100, 129], 0.0666666667), ([100, 160], 0.0666666667)],
+)
+def test_summary_rate_includes_silent_seconds_and_uses_scheduled_hold(tmp_path, timestamps, expected):
+    path = tmp_path / "stalled.csv"
+    lines = [HEADER] + [row("http_req_duration", second, 500, "products", "100") for second in timestamps]
+    path.write_text("\n".join(lines) + "\n")
+
+    result = summarize_k6.summarize(path)["100"]
+
+    assert result["all"]["rps"] == pytest.approx(expected)
+    assert result["products"]["rps"] == pytest.approx(expected)
 
 
 def test_compare_reports_change_in_percent(k6_csv):

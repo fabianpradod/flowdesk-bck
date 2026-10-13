@@ -14,6 +14,8 @@ from collections import defaultdict
 from pathlib import Path
 
 STAGES = ("25", "50", "100")
+# Each hold in flowdesk_load.js lasts 30 seconds, including time with no responses.
+HOLD_SECONDS = 30
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -41,7 +43,6 @@ def _stats(durations: list[float], failures: int, seconds: int) -> dict:
 def summarize(path: Path) -> dict:
     durations = defaultdict(list)
     failures = defaultdict(int)
-    seconds = defaultdict(set)
     with open(path, newline="") as handle:
         for row in csv.DictReader(handle):
             tags = dict(item.split("=", 1) for item in row["extra_tags"].split("&") if "=" in item)
@@ -50,7 +51,6 @@ def summarize(path: Path) -> dict:
                 continue
             if row["metric_name"] == "http_req_duration":
                 durations[(stage, row["name"])].append(float(row["metric_value"]))
-                seconds[stage].add(int(row["timestamp"]))
             elif row["metric_name"] == "http_req_failed" and float(row["metric_value"]) > 0:
                 failures[(stage, row["name"])] += 1
 
@@ -59,14 +59,13 @@ def summarize(path: Path) -> dict:
         names = sorted(name for (key_stage, name) in durations if key_stage == stage)
         if not names:
             continue
-        hold = len(seconds[stage])
         summary[stage] = {
-            name: _stats(durations[(stage, name)], failures[(stage, name)], hold) for name in names
+            name: _stats(durations[(stage, name)], failures[(stage, name)], HOLD_SECONDS) for name in names
         }
         summary[stage]["all"] = _stats(
             [value for name in names for value in durations[(stage, name)]],
             sum(failures[(stage, name)] for name in names),
-            hold,
+            HOLD_SECONDS,
         )
     return summary
 

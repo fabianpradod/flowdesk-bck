@@ -40,6 +40,23 @@ def test_pool_settings_come_from_environment(reload_config):
     assert settings.DB_POOL_RECYCLE == 600
 
 
+@pytest.mark.parametrize(
+    "size, overflow, setting",
+    [("0", "0", "DB_POOL_SIZE"), ("0", "20", "DB_POOL_SIZE"),
+     ("-1", "20", "DB_POOL_SIZE"), ("1", "-1", "DB_MAX_OVERFLOW")],
+)
+def test_pool_settings_reject_unbounded_or_nonpositive_capacity(reload_config, size, overflow, setting):
+    with pytest.raises(ValueError, match=setting):
+        reload_config(DB_POOL_SIZE=size, DB_MAX_OVERFLOW=overflow)
+
+
+def test_pool_settings_accept_a_finite_pool_without_overflow(reload_config):
+    settings = reload_config(DB_POOL_SIZE="1", DB_MAX_OVERFLOW="0")
+
+    assert settings.DB_POOL_SIZE == 1
+    assert settings.DB_MAX_OVERFLOW == 0
+
+
 def test_engine_uses_pool_settings(monkeypatch):
     monkeypatch.setattr(database, "DB_POOL_SIZE", 12)
     monkeypatch.setattr(database, "DB_MAX_OVERFLOW", 3)

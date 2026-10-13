@@ -78,6 +78,17 @@ Las etapas son una rampa de 15 s y 30 s sostenidos en 25, 50 y 100 usuarios.
 `tests/load/summarize_k6.py` calcula p50, p95 y p99 por etapa y por endpoint,
 contando solo los periodos sostenidos.
 
+La tasa `req/s` divide las solicitudes etiquetadas con cada etapa entre sus 30 s
+programados, incluidos los segundos sin respuestas. Las etiquetas corresponden
+al inicio de la solicitud: una respuesta tardía conserva su etapa y no cambia
+el denominador. Si se cambia la duración de las etapas de k6, también debe
+actualizarse `HOLD_SECONDS` en el resumen.
+
+Las tablas históricas de este documento no se han recalculado tras corregir ese
+denominador. El resumen anterior contaba solo los segundos con respuestas y podía
+sobreestimar `req/s` durante bloqueos. Esas tasas y sus porcentajes de mejora deben
+regenerarse desde los CSV antes de usarlos como evidencia cuantitativa.
+
 ### Cómo reproducir
 
 ```bash
@@ -257,6 +268,9 @@ Bajarlo requiere menos trabajo de Python por solicitud o más procesos.
 
 - `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT` y `DB_POOL_RECYCLE` se leen
   del entorno (`app/core/config.py`). Por defecto 20, 20, 30 s y 3600 s.
+- El arranque rechaza `DB_POOL_SIZE < 1` y `DB_MAX_OVERFLOW < 0`: la admisión
+  requiere un pool finito y no admite los valores especiales de SQLAlchemy para
+  conexiones ilimitadas.
 - 20 + 20 = 40 conexiones, las mismas que hilos tiene la API. Con el límite de
   admisión, 20 + 20 y 40 + 0 midieron lo mismo (68 y 69 solicitudes/s con 100
   usuarios, sin errores); 20 + 20 abrió solo 59 conexiones en toda la corrida y deja
