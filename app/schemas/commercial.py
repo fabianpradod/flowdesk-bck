@@ -61,6 +61,9 @@ class ClientStatusUpdate(BaseModel):
 
 
 class ClientResponse(ClientBase):
+    # Stored emails were validated on the way in. EmailStr here ran the validator again
+    # for every client of every listing, which was most of the time of GET /clients.
+    correo: Optional[str] = Field(default=None, max_length=150)
     id: UUID
     is_active: bool
     created_at: datetime

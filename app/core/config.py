@@ -10,6 +10,18 @@ DB_USER     = os.getenv("DB_USERNAME")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_PORT     = os.getenv("DB_PORT", "5432")
 
+#Connection pool, per API process
+DB_POOL_SIZE    = int(os.getenv("DB_POOL_SIZE", "20"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+DB_POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+
+# Admission requires a finite pool; SQLAlchemy's unlimited modes have no slot count.
+if DB_POOL_SIZE < 1:
+    raise ValueError("DB_POOL_SIZE must be at least 1 for bounded request admission")
+if DB_MAX_OVERFLOW < 0:
+    raise ValueError("DB_MAX_OVERFLOW must be non-negative for bounded request admission")
+
 #Auth
 SECRET_KEY  = os.getenv("SECRET_KEY")
 ALGORITHM   = "HS256"

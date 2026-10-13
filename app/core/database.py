@@ -2,7 +2,10 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-from app.core.config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
+from app.core.config import (
+    DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT,
+    DB_POOL_SIZE, DB_MAX_OVERFLOW, DB_POOL_TIMEOUT, DB_POOL_RECYCLE,
+)
 
 
 Base = declarative_base()
@@ -21,7 +24,10 @@ def _build_engine():
     return create_engine(
         connection_url,
         pool_pre_ping=True,
-        pool_recycle=3600,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_MAX_OVERFLOW,
+        pool_timeout=DB_POOL_TIMEOUT,
+        pool_recycle=DB_POOL_RECYCLE,
         echo=False
     )
 

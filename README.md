@@ -50,6 +50,10 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 | `DB_USERNAME` | sí | Usuario de la base |
 | `DB_PASSWORD` | sí | Contraseña de la base |
 | `DB_PORT` | no | Puerto, 5432 por defecto |
+| `DB_POOL_SIZE` | no | Conexiones fijas del pool por proceso, 20 por defecto; debe ser al menos 1 |
+| `DB_MAX_OVERFLOW` | no | Conexiones extra sobre el pool, 20 por defecto; debe ser 0 o mayor. No se admiten pools ilimitados. La suma con `DB_POOL_SIZE` es también el máximo de solicitudes que la API atiende a la vez; las demás esperan turno |
+| `DB_POOL_TIMEOUT` | no | Segundos de espera por una conexión libre, 30 por defecto |
+| `DB_POOL_RECYCLE` | no | Segundos antes de renovar una conexión, 3600 por defecto |
 | `SECRET_KEY` | sí | Firma JWT; use un valor aleatorio largo |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | no | Duración de access tokens |
 | `SUPERADMIN_EMAIL` | sí | Correo del superadministrador inicial |
@@ -301,6 +305,12 @@ pytest -q
 
 Las pruebas no requieren un PostgreSQL real: reemplazan la inicialización y las
 dependencias de persistencia cuando corresponde.
+
+### Pruebas de carga
+
+`tests/load/` tiene el escenario de k6, el script que llena una base local
+desechable y el que resume los resultados. El método, la línea base y las
+optimizaciones del sprint 9 están en [docs/rendimiento.md](docs/rendimiento.md).
 
 ### Análisis inteligente — `/api/v1/ai`
 

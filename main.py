@@ -3,7 +3,9 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.config import DB_MAX_OVERFLOW, DB_POOL_SIZE
 from app.core.https import SecureFastAPI, configure_transport_security
+from app.core.pool_admission import PoolAdmissionMiddleware
 from app.db.init_db import init_db
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
@@ -38,6 +40,9 @@ app = SecureFastAPI(
 )
 
 init_db()
+
+# Added before transport security so host and HTTPS rejections never wait for a slot.
+app.add_middleware(PoolAdmissionMiddleware, limit=DB_POOL_SIZE + DB_MAX_OVERFLOW)
 
 # ─── transport security ───────────────────────────────────────────
 # Host validation and TLS are opt-in; SecureFastAPI always applies headers and CORS.
