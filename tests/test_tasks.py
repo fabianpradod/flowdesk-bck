@@ -259,6 +259,124 @@ def test_create_task_endpoint_returns_id_and_get_recovers_after_request_session(
     finally:
         reopened.close()
 
+def test_update_task_persists_all_mutable_fields_in_a_new_session(task_persistence_db):
+    db, SessionLocal, _tasks, user = task_persistence_db
+    created = create_task(
+        TaskCreate(
+            titulo="Original title",
+            descripcion="Original description",
+            fecha_limite=datetime(2026, 5, 1, 12, 30),
+            prioridad="baja",
+        ),
+        user,
+        db,
+    )
+    task_id = created["id"]
+    db.close()
+
+    update_session = SessionLocal()
+    try:
+        updated = update_task(
+            task_id,
+            TaskUpdate(
+                titulo="Updated title",
+                descripcion="Updated description",
+                fecha_limite=datetime(2026, 7, 15, 9, 0),
+                prioridad="urgente",
+            ),
+            user,
+            update_session,
+        )
+        assert updated["titulo"] == "Updated title"
+        assert updated["descripcion"] == "Updated description"
+        assert updated["fecha_limite"] == datetime(2026, 7, 15, 9, 0)
+        assert updated["prioridad"] == "urgente"
+    finally:
+        update_session.close()
+
+    reopened = SessionLocal()
+    try:
+        recovered = get_task(task_id, user, reopened)
+        assert recovered["titulo"] == "Updated title"
+        assert recovered["descripcion"] == "Updated description"
+        assert recovered["fecha_limite"] == datetime(2026, 7, 15, 9, 0)
+        assert recovered["prioridad"] == "urgente"
+        assert recovered["estado"] == "pendiente"
+    finally:
+        reopened.close()
+
+def test_update_status_and_delete_persist_after_closing_the_writing_session(task_persistence_db):
+    db, SessionLocal, _tasks, user = task_persistence_db
+    created = create_task(TaskCreate(titulo="Lifecycle task"), user, db)
+    task_id = created["id"]
+    db.close()
+
+    status_session = SessionLocal()
+    try:
+        changed = update_task_status(task_id, "completada", user, status_session)
+        assert changed["estado"] == "completada"
+    finally:
+        status_session.close()
+
+    verify_status = SessionLocal()
+    try:
+        assert get_task(task_id, user, verify_status)["estado"] == "completada"
+    finally:
+        verify_status.close()
+
+    delete_session = SessionLocal()
+    try:
+        delete_task(task_id, user, delete_session)
+    finally:
+        delete_session.close()
+
+    verify_deletion = SessionLocal()
+    try:
+        with pytest.raises(AppError) as error:
+            get_task(task_id, user, verify_deletion)
+        assert error.value.status_code == 404
+        assert error.value.detail == "Task not found"
+    finally:
+        verify_deletion.close()
+
+def test_update_task_rolls_back_when_database_write_fails(task_persistence_db):
+    db, SessionLocal, _tasks, user = task_persistence_db
+    created = create_task(
+        TaskCreate(titulo="Stable title", descripcion="Stable description"),
+        user,
+        db,
+    )
+    task_id = created["id"]
+    original_execute = db.execute
+    original_rollback = db.rollback
+    calls = 0
+    rollback_calls = []
+
+    def failing_execute(statement, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("synthetic database failure")
+        return original_execute(statement, *args, **kwargs)
+
+    def recording_rollback():
+        rollback_calls.append(True)
+        return original_rollback()
+
+    db.execute = failing_execute
+    db.rollback = recording_rollback
+    with pytest.raises(RuntimeError, match="synthetic database failure"):
+        update_task(task_id, TaskUpdate(titulo="Must not persist"), user, db)
+    assert len(rollback_calls) == 1
+    db.close()
+
+    reopened = SessionLocal()
+    try:
+        recovered = get_task(task_id, user, reopened)
+        assert recovered["titulo"] == "Stable title"
+        assert recovered["descripcion"] == "Stable description"
+    finally:
+        reopened.close()
 
 def test_tasks_are_isolated_between_tenant_contexts(task_isolation_db):
     db, SessionLocal, tables, user_a, _user_a2, user_b = task_isolation_db
