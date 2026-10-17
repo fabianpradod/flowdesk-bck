@@ -9,7 +9,7 @@ from app.utils.exceptions import AppError
 from app.schemas.companies import CompanyCreate
 from app.core.security import decode_access_token, token_subject
 from app.utils.email import send_password_set_email, send_password_reset_email
-from app.core.security import hash_password, verify_password, create_access_token
+from app.core.security import hash_password, verify_password, create_access_token, validate_password
 from app.tenancy.bootstrap import bootstrap_tenant_schema, generate_schema_name
 from app.utils.logger import logger
 
@@ -32,6 +32,12 @@ def validate_password_reuse(user: User, new_password: str):
             status_code=400,
             message="New password cannot match current password"
         )
+
+def validate_new_password(new_password: str) -> None:
+    try:
+        validate_password(new_password)
+    except ValueError as exc:
+        raise AppError(status_code=400, message="Invalid password") from exc
 
 def _log_email_failure(kind: str, user_id, exc: Exception) -> None:
     # User id and exception class only: SMTP errors such as SMTPRecipientsRefused
@@ -184,6 +190,7 @@ def list_employees(current_user: User, db: Session, company_id=None) -> list[Use
 
 # ─── set password ─────────────────────────────────────────────────
 def set_password(token: str, new_password: str, db: Session) -> dict:
+    validate_new_password(new_password)
 
     payload = decode_access_token(token)
 
@@ -220,6 +227,8 @@ def set_password(token: str, new_password: str, db: Session) -> dict:
     return {"message": "Password set successfully"}
 
 def reset_password(token: str, new_password: str, db: Session) -> dict:
+    validate_new_password(new_password)
+
     payload = decode_access_token(token)
 
     user_id = token_subject(payload) if payload else None
