@@ -72,7 +72,76 @@ def test_tax_rate_defaults_to_zero_when_a_legacy_tenant_has_no_configuration():
     metadata = build_tenant_metadata(SCHEMA_NAME)
     config = metadata.tables[f"{SCHEMA_NAME}.configuracion_tributaria"]
 
-    assert commercial_service._get_tax_rate(FakeDB([[]]), config) == Decimal("0")
+    assert commercial_service._get_tax_rate(FakeDB([[]]), config) == Decimal("0.00")
+
+@pytest.mark.parametrize(
+    ("rate", "expected_tax", "expected_total"),
+    [
+        (Decimal("0.00"), Decimal("0.00"), Decimal("100.00")),
+        (Decimal("12.00"), Decimal("12.00"), Decimal("112.00")),
+        (Decimal("15.00"), Decimal("15.00"), Decimal("115.00")),
+    ],
+)
+def test_new_sales_use_the_configured_tax_rate(monkeypatch, rate, expected_tax, expected_total):
+    product_id = uuid4()
+    product = {
+        "id": product_id,
+        "nombre": "Configured tax product",
+        "precio_venta": Decimal("100.00"),
+        "stock_actual": Decimal("10"),
+        "stock_minimo": Decimal("1"),
+        "is_active": True,
+    }
+    db = FakeDB([[product], [{"tasa_impuesto": rate}]])
+    user = SimpleNamespace(id=uuid4(), company_id=uuid4(), company=SimpleNamespace(is_active=True, schema_name=SCHEMA_NAME))
+    monkeypatch.setattr(commercial_service, "_sync_stock_alerts", lambda **_kw: None)
+    monkeypatch.setattr(commercial_service, "get_sale", lambda sale_id, *_args, **_kwargs: {"id": sale_id})
+
+    commercial_service.create_sale(
+        SaleCreate(items=[{"producto_id": product_id, "cantidad": 1}]), user, db
+    )
+
+    sale_params = next(statement.compile().params for statement in db.statements if statement.compile().params.get("estado") == "completada")
+    assert sale_params["tasa_impuesto"] == rate
+    assert sale_params["impuesto"] == expected_tax
+    assert sale_params["total"] == expected_total
+
+def test_tax_rate_change_only_affects_subsequent_sales(monkeypatch):
+    product_id = uuid4()
+    product = {
+        "id": product_id,
+        "nombre": "Snapshot product",
+        "precio_venta": Decimal("100.00"),
+        "stock_actual": Decimal("10"),
+        "stock_minimo": Decimal("1"),
+        "is_active": True,
+    }
+    user = SimpleNamespace(id=uuid4(), company_id=uuid4(), company=SimpleNamespace(is_active=True, schema_name=SCHEMA_NAME))
+    monkeypatch.setattr(commercial_service, "_sync_stock_alerts", lambda **_kw: None)
+    monkeypatch.setattr(commercial_service, "get_sale", lambda sale_id, *_args, **_kwargs: {"id": sale_id})
+
+    first_db = FakeDB([[product], [{"tasa_impuesto": Decimal("12.00")}]] )
+    commercial_service.create_sale(SaleCreate(items=[{"producto_id": product_id, "cantidad": 1}]), user, first_db)
+    first = next(statement.compile().params for statement in first_db.statements if statement.compile().params.get("estado") == "completada")
+
+    second_db = FakeDB([[product], [{"tasa_impuesto": Decimal("15.00")}]] )
+    commercial_service.create_sale(SaleCreate(items=[{"producto_id": product_id, "cantidad": 1}]), user, second_db)
+    second = next(statement.compile().params for statement in second_db.statements if statement.compile().params.get("estado") == "completada")
+
+    assert first["tasa_impuesto"] == Decimal("12.00")
+    assert first["impuesto"] == Decimal("12.00")
+    assert second["tasa_impuesto"] == Decimal("15.00")
+    assert second["impuesto"] == Decimal("15.00")
+
+def test_tax_configuration_is_tenant_specific():
+    metadata = build_tenant_metadata(SCHEMA_NAME)
+    config = metadata.tables[f"{SCHEMA_NAME}.configuracion_tributaria"]
+    other_schema = "tenant_" + "c" * 32
+    other_metadata = build_tenant_metadata(other_schema)
+    other_config = other_metadata.tables[f"{other_schema}.configuracion_tributaria"]
+
+    assert commercial_service._get_tax_rate(FakeDB([[{"tasa_impuesto": Decimal("12.00")}]]), config) == Decimal("12.00")
+    assert commercial_service._get_tax_rate(FakeDB([[{"tasa_impuesto": Decimal("15.00")}]]), other_config) == Decimal("15.00")
 
 def test_tax_configuration_update_persists_a_tenant_specific_rate(monkeypatch):
     metadata = build_tenant_metadata(SCHEMA_NAME)

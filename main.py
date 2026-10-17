@@ -1,17 +1,18 @@
-from fastapi import FastAPI, Request
+from fastapi import Request
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.config import FRONTEND_URL
-from app.core.https import configure_transport_security
+from app.core.config import DB_MAX_OVERFLOW, DB_POOL_SIZE
+from app.core.https import SecureFastAPI, configure_transport_security
+from app.core.pool_admission import PoolAdmissionMiddleware
 from app.db.init_db import init_db
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.users import router as users_router
 from app.api.v1.routes.roles import router as roles_router
 from app.api.v1.routes.inventory import router as inventory_router
 from app.api.v1.routes.commercial import router as commercial_router
+from app.api.v1.routes.taxation import router as taxation_router
 from app.api.v1.routes.intelligence import router as intelligence_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.analytics import router as analytics_router
@@ -21,7 +22,7 @@ from app.api.v1.routes.companies import router as companies_router
 from app.api.v1.routes.system import router as system_router
 from app.utils.exceptions import build_error_payload, sanitize_validation_errors
 
-app = FastAPI(
+app = SecureFastAPI(
     title = "FlowDesk API",
     description = """API REST para la gestión de:
         - Autenticación
@@ -40,22 +41,12 @@ app = FastAPI(
 
 init_db()
 
+# Added before transport security so host and HTTPS rejections never wait for a slot.
+app.add_middleware(PoolAdmissionMiddleware, limit=DB_POOL_SIZE + DB_MAX_OVERFLOW)
+
 # ─── transport security ───────────────────────────────────────────
-# No-op unless FORCE_HTTPS / ALLOWED_HOSTS are set, so local dev is unaffected.
+# Host validation and TLS are opt-in; SecureFastAPI always applies headers and CORS.
 configure_transport_security(app)
-
-# ─── CORS ─────────────────────────────────────────────────────────
-_cors_origins = ["http://localhost:5173", "http://localhost:3000"]
-if FRONTEND_URL:
-    _cors_origins.append(FRONTEND_URL)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ─── exception handlers ───────────────────────────────────────────
 @app.exception_handler(StarletteHTTPException)
@@ -90,6 +81,7 @@ app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(inventory_router)
 app.include_router(commercial_router)
+app.include_router(taxation_router)
 app.include_router(intelligence_router)
 app.include_router(chat_router)
 app.include_router(analytics_router)

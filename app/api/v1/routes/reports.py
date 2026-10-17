@@ -10,7 +10,7 @@ from uuid import UUID
 from app.api.dependencies.auth import get_db, require_role
 from app.models.users import User
 from app.schemas.inventory import AnalyticsPeriod, MovementType
-from app.schemas.reports import REPORT_MEDIA_TYPES, ReportFormat, ReportHistoryRow, ReportType
+from app.schemas.reports import REPORT_MEDIA_TYPES, ReportFormat, ReportHistoryRow, ReportType, TaxReportRegime, XLSX_MEDIA_TYPE
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
 
@@ -90,6 +90,32 @@ def alerts_report(
     )
     return _download(dataset, current_user, db, report_type="alertas", report_format=format)
 
+@router.get("/tributario", summary="Reporte tributario auxiliar XLSX")
+def tax_report(
+    regime: TaxReportRegime = Query(...),
+    period: AnalyticsPeriod = Query(default="30d"),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin")),
+):
+    report = reports_service.build_tax_report(
+        current_user,
+        db,
+        regime=regime,
+        period=period,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    payload, filename = reports_service.generate_tax_report(report, current_user, db)
+    return StreamingResponse(
+        BytesIO(payload),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(payload)),
+        },
+    )
 
 def _download(
     dataset,

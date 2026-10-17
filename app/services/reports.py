@@ -1,12 +1,13 @@
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session
 
 from app.models.users import User
 from app.schemas.inventory import AnalyticsPeriod, MovementType
-from app.schemas.reports import ReportDataset, ReportFormat, ReportType
+from app.schemas.reports import ReportDataset, ReportFormat, ReportSheet, ReportType, ReportWorkbook, TaxReportRegime
 from app.services.inventory import (
     _get_tenant_tables_for_user,
     _resolve_analytics_range,
@@ -14,10 +15,15 @@ from app.services.inventory import (
     _utcnow,
     format_inventory_history_row,
 )
+from app.services.analytics import FINAL_SALE_STATES
+from app.services import fiscal_documents, tax_period
+from app.services.taxation import resolve_current_profile
+from app.taxation.fiscal_adapter import document_tax_components
 from app.utils.csv_report import render_csv
 from app.utils.exceptions import AppError
 from app.utils.logger import logger
 from app.utils.pdf_report import render_pdf
+from app.utils.xlsx_report import render_xlsx
 
 INVENTORY_COLUMNS = [
     "SKU",
@@ -63,6 +69,18 @@ DIRECTION_LABELS = {"in": "Entrada", "out": "Salida"}
 EMPTY_CELL = "—"
 GENERATED_STATUS = "generado"
 RENDERERS = {"csv": render_csv, "pdf": render_pdf}
+
+SMALL_PURCHASE_COLUMNS = [
+    "No.", "Fecha", "Tipo Documento", "Número Documento", "NIT Proveedor",
+    "Nombre Proveedor", "Total Compra",
+]
+SMALL_SALE_COLUMNS = [
+    "No.", "Fecha", "Número Factura", "NIT Comprador", "Nombre Comprador", "Total Venta",
+]
+GENERAL_COLUMNS = [
+    "No.", "Fecha", "Tipo Documento", "Serie / Autorización", "Número Documento",
+    "NIT", "Nombre", "Valor Neto / Base", "IVA", "Total Documento",
+]
 
 
 def build_inventory_dataset(
@@ -243,6 +261,216 @@ def build_alerts_dataset(
         metadata=_build_metadata(current_user, filters=filters, analytics_range=analytics_range),
     )
 
+def build_tax_report(
+    current_user: User,
+    db: Session,
+    *,
+    regime: TaxReportRegime,
+    period: AnalyticsPeriod = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> ReportWorkbook:
+    """Build the internal tax-control workbook from tenant-scoped data.
+
+    Sales remain historical ``Venta`` snapshots. Input purchases come only
+    from persisted ``FiscalDocument`` records and their tax components; they
+    are never inferred from inventory movements.
+    """
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    tables = _get_tenant_tables_for_user(current_user)
+    sales = tables["venta"]
+    clients = tables["cliente"]
+    query = (
+        select(
+            sales.c.fecha,
+            sales.c.subtotal,
+            sales.c.descuento,
+            sales.c.impuesto,
+            sales.c.tasa_impuesto,
+            sales.c.total,
+            sales.c.es_exenta,
+            clients.c.nombre.label("cliente_nombre"),
+        )
+        .select_from(sales.outerjoin(clients, sales.c.cliente_id == clients.c.id))
+        .where(
+            sales.c.fecha >= analytics_range["start"],
+            sales.c.fecha <= analytics_range["end"],
+            func.lower(sales.c.estado).in_(FINAL_SALE_STATES),
+        )
+        .order_by(sales.c.fecha.asc(), sales.c.id.asc())
+    )
+    sales_rows = [dict(row) for row in db.execute(query).mappings()]
+    debit = _get_fiscal_debit_for_report(current_user, db, period, start_date, end_date)
+    input_documents = _get_input_documents_for_report(
+        current_user, db, analytics_range["start"].date(), analytics_range["end"].date()
+    )
+    period_result = None
+    if input_documents:
+        try:
+            period_result = tax_period.calculate_period(
+                current_user, db,
+                start_date=analytics_range["start"].date(),
+                end_date=analytics_range["end"].date(),
+                include_details=True,
+            )
+        except AppError as exc:
+            if getattr(exc, "status_code", None) != 404:
+                raise
+
+    sale_sheet = _build_tax_sales_sheet(sales_rows, regime)
+    profile = (lambda issue_date: _resolve_report_profile(current_user, db, issue_date)) if input_documents else None
+    purchase_sheet = ReportSheet(
+        name="Compras",
+        columns=SMALL_PURCHASE_COLUMNS if regime == "SMALL_TAXPAYER" else GENERAL_COLUMNS,
+        rows=_build_tax_purchase_rows(input_documents, regime, profile),
+    )
+    summary = _build_tax_summary(regime, sales_rows, debit, period_result=period_result, input_documents=input_documents)
+    return ReportWorkbook(
+        title="Reporte Tributario",
+        sheets=[purchase_sheet, sale_sheet, summary],
+        metadata=_build_metadata(
+            current_user,
+            filters=[f"Régimen: {regime}"],
+            analytics_range=analytics_range,
+        ),
+    )
+
+def generate_tax_report(
+    report: ReportWorkbook,
+    current_user: User,
+    db: Session,
+) -> tuple[bytes, str]:
+    payload = render_xlsx(report)
+    _record_generation(current_user, db, report, report_type="tributario", report_format="xlsx")
+    return payload, build_filename("tributario", "xlsx")
+
+def _build_tax_sales_sheet(rows: list[dict], regime: TaxReportRegime) -> ReportSheet:
+    if regime == "SMALL_TAXPAYER":
+        values = [
+            [index, _date_value(row["fecha"]), None, None,
+             row["cliente_nombre"] or "Consumidor Final", _money(row["total"])]
+            for index, row in enumerate(rows, start=1)
+        ]
+        return ReportSheet("Ventas", SMALL_SALE_COLUMNS, values)
+
+    values = [
+        [index, _date_value(row["fecha"]), "Venta", None, None, None,
+         row["cliente_nombre"] or "Consumidor Final",
+         _money(_to_decimal(row["subtotal"]) - _to_decimal(row["descuento"])),
+         _money(row["impuesto"]), _money(row["total"])]
+        for index, row in enumerate(rows, start=1)
+    ]
+    return ReportSheet("Ventas", GENERAL_COLUMNS, values)
+
+def _build_tax_summary(regime: TaxReportRegime, rows: list[dict], debit: dict, *, period_result: dict | None = None, input_documents: list[dict] | None = None) -> ReportSheet:
+    income = sum((_to_decimal(row["total"]) for row in rows), Decimal("0.00"))
+    rates = {_to_decimal(row["tasa_impuesto"]) for row in rows}
+    # A single historical rate is numeric. Multiple rates do not have one
+    # truthful scalar representation, so the Excel cell remains empty.
+    rate_value = next(iter(rates)) if len(rates) == 1 else None
+    if regime == "SMALL_TAXPAYER":
+        values = [
+            ["Ingresos por ventas/servicios", _money(income)],
+            ["Tipo impositivo", rate_value],
+            ["Impuesto determinado", _money(debit["fiscal_debit"])],
+            ["Retenciones", None],
+            ["Impuesto estimado", None],
+        ]
+    else:
+        values = [
+            ["Ventas netas", _money(sum((_to_decimal(row["subtotal"]) - _to_decimal(row["descuento"]) for row in rows), Decimal("0.00")))],
+            ["Débito fiscal", _money(debit["fiscal_debit"])],
+            ["Compras con derecho a crédito", None],
+            ["Crédito fiscal", None],
+            ["Diferencia débito - crédito", None],
+        ]
+    if regime == "SMALL_TAXPAYER" and period_result and input_documents:
+        values[3][1] = _money_or_none(period_result.get("withholding_tax"))
+    if regime != "SMALL_TAXPAYER":
+        tax_debit = period_result["tax_debit"] if period_result else _money(debit["fiscal_debit"])
+        tax_credit = period_result["tax_credit"] if period_result and input_documents else None
+        credit_base = _eligible_purchase_base(period_result) if period_result and input_documents else None
+        values[1][1] = _money(tax_debit)
+        values[2][1] = _money(credit_base) if credit_base is not None else None
+        values[3][1] = _money(tax_credit) if tax_credit is not None else None
+        values[4][1] = _money(period_result["net_tax"]) if period_result else None
+    return ReportSheet("Resumen", ["Concepto", "Valor"], values)
+
+def _get_fiscal_debit_for_report(current_user, db, period, start_date, end_date) -> dict:
+    from app.services.analytics import get_fiscal_debit
+
+    return get_fiscal_debit(
+        current_user, db, period=period, start_date=start_date, end_date=end_date
+    )
+
+def _get_input_documents_for_report(current_user, db, start_date: date, end_date: date) -> list[dict]:
+    documents = _get_tenant_tables_for_user(current_user)["fiscal_document"]
+    query = select(documents).where(
+        documents.c.direction == "INPUT",
+        documents.c.issue_date >= start_date,
+        documents.c.issue_date <= end_date,
+        documents.c.status.not_in(("CANCELLED", "VOIDED")),
+    ).order_by(documents.c.issue_date.asc(), documents.c.created_at.asc())
+    return [fiscal_documents.get_document(row["id"], current_user, db) for row in db.execute(query).mappings()]
+
+def _resolve_report_profile(current_user, db, on_date):
+    try:
+        return resolve_current_profile(current_user, db, on_date)
+    except AppError as exc:
+        if getattr(exc, "status_code", None) == 404:
+            return None
+        raise
+
+def _build_tax_purchase_rows(documents: list[dict], regime: TaxReportRegime, profile) -> list[list]:
+    rows = []
+    for index, document in enumerate(documents, start=1):
+        issue_date = _date_value(document["issue_date"])
+        number = document.get("document_number")
+        issuer_id = document.get("issuer_tax_identifier")
+        issuer_name = document.get("issuer_name")
+        if regime == "SMALL_TAXPAYER":
+            rows.append([index, issue_date, document.get("document_type"), number, issuer_id, issuer_name, _money_or_none(document.get("total"))])
+        else:
+            rows.append([
+                index, issue_date, document.get("document_type"),
+                _join_document_identity(document.get("series"), document.get("authorization_number")),
+                number, issuer_id, issuer_name, _money_or_none(document.get("taxable_base")),
+                _report_tax_amount(document, profile), _money_or_none(document.get("total")),
+            ])
+    return rows
+
+def _join_document_identity(series, authorization):
+    values = [value for value in (series, authorization) if value]
+    return " / ".join(values) if values else None
+
+def _report_tax_amount(document, profile):
+    if callable(profile):
+        profile = profile(document.get("issue_date"))
+    if profile is None:
+        return None
+    configured_codes = {tax.tax_code for tax in profile.taxes}
+    components = [component for component in document_tax_components(document)
+                  if component.get("tax_code") in configured_codes and not component.get("is_withholding", False)]
+    codes = {component.get("tax_code") for component in components}
+    if len(codes) != 1:
+        return None
+    return _money(sum((_to_decimal(component.get("amount")) for component in components), Decimal("0")))
+
+def _eligible_purchase_base(period_result):
+    return sum((
+        _to_decimal(detail.get("taxable_base"))
+        for detail in period_result.get("details", [])
+        if detail.get("eligible_for_input_credit")
+    ), Decimal("0"))
+
+def _date_value(value: datetime | date) -> date:
+    return value.date() if isinstance(value, datetime) else value
+
+def _money(value) -> Decimal:
+    return _to_decimal(value).quantize(Decimal("0.01"))
+
+def _money_or_none(value):
+    return None if value is None else _money(value)
 
 def _build_metadata(
     current_user: User,

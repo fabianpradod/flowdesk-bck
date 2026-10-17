@@ -50,6 +50,10 @@ tablas globales y cada empresa recibe un esquema PostgreSQL independiente.
 | `DB_USERNAME` | sí | Usuario de la base |
 | `DB_PASSWORD` | sí | Contraseña de la base |
 | `DB_PORT` | no | Puerto, 5432 por defecto |
+| `DB_POOL_SIZE` | no | Conexiones fijas del pool por proceso, 20 por defecto; debe ser al menos 1 |
+| `DB_MAX_OVERFLOW` | no | Conexiones extra sobre el pool, 20 por defecto; debe ser 0 o mayor. No se admiten pools ilimitados. La suma con `DB_POOL_SIZE` es también el máximo de solicitudes que la API atiende a la vez; las demás esperan turno |
+| `DB_POOL_TIMEOUT` | no | Segundos de espera por una conexión libre, 30 por defecto |
+| `DB_POOL_RECYCLE` | no | Segundos antes de renovar una conexión, 3600 por defecto |
 | `SECRET_KEY` | sí | Firma JWT; use un valor aleatorio largo |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | no | Duración de access tokens |
 | `SUPERADMIN_EMAIL` | sí | Correo del superadministrador inicial |
@@ -75,8 +79,29 @@ por variables de entorno.
 | `ALLOWED_HOSTS` | Lista separada por comas de hosts aceptados. Vacío desactiva la validación |
 | `HSTS_MAX_AGE` | Duración de HSTS en segundos. Por defecto 63072000, dos años |
 
-Las cabeceras `X-Content-Type-Options`, `X-Frame-Options` y `Referrer-Policy`
-se envían siempre, con o sin TLS.
+Las cabeceras `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+`Content-Security-Policy`, `Cross-Origin-Resource-Policy: same-origin` y
+`Cache-Control: no-store` se envían siempre, incluidos errores 500, preflights CORS
+y rechazos de host. HSTS se envía únicamente en respuestas HTTPS con
+`FORCE_HTTPS=true`.
+
+La CSP de la API bloquea recursos y framing. `/docs`, `/redoc` y el callback OAuth
+usan una política específica: permiten los CDN de la documentación y scripts
+inline autorizados por hash SHA-256, sin `unsafe-inline` ni `unsafe-eval` para
+scripts. Las interfaces de documentación requieren estilos inline. La política
+protege el contenido servido por este backend; el frontend debe enviar su propia
+CSP.
+
+CORS permite `FRONTEND_URL` y los puertos locales 5173/3000 por defecto. En
+producción configure `CORS_ORIGINS=https://app.example.com` (lista separada por
+comas de orígenes exactos, sin paths ni barra final): reemplaza los defaults y
+excluye localhost. Un valor vacío niega todos los orígenes. Solo se aceptan
+GET/POST/PUT/PATCH/DELETE/OPTIONS y los headers Authorization/Content-Type,
+además de los headers simples CORS. CORS también cubre los errores 500, y no
+sustituye autenticación ni autorización.
+
+La evidencia de mitigaciones y el comparativo ZAP del Sprint 9 están en
+[docs/security/sprint9/README.md](docs/security/sprint9/README.md).
 
 Dos detalles que importan al desplegar:
 
@@ -280,6 +305,12 @@ pytest -q
 
 Las pruebas no requieren un PostgreSQL real: reemplazan la inicialización y las
 dependencias de persistencia cuando corresponde.
+
+### Pruebas de carga
+
+`tests/load/` tiene el escenario de k6, el script que llena una base local
+desechable y el que resume los resultados. El método, la línea base y las
+optimizaciones del sprint 9 están en [docs/rendimiento.md](docs/rendimiento.md).
 
 ### Análisis inteligente — `/api/v1/ai`
 

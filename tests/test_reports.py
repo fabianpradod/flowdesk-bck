@@ -1,11 +1,14 @@
 import unittest
+from io import BytesIO
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from app.api.dependencies.auth import get_current_user, get_db
 from app.api.v1.routes.reports import router as reports_router
@@ -18,12 +21,15 @@ from app.services.reports import (
     build_filename,
     build_inventory_dataset,
     build_movements_dataset,
+    build_tax_report,
     generate_report,
     list_report_history,
 )
+from app.services import reports as reports_service
 from app.utils.csv_report import escape_formula, render_csv
 from app.utils.exceptions import AppError, build_error_payload
 from app.utils.pdf_report import render_pdf
+from app.utils.xlsx_report import render_xlsx
 
 
 SCHEMA_NAME = "tenant_" + "a" * 32
@@ -66,6 +72,93 @@ class FakeDB:
     def rollback(self):
         self.rollbacks += 1
 
+class FiscalDocumentTaxReportTests(unittest.TestCase):
+    def _document(self, **overrides):
+        document = {
+            "id": uuid4(),
+            "issue_date": date(2026, 1, 10),
+            "document_type": "INVOICE",
+            "series": "A",
+            "document_number": "100",
+            "authorization_number": "AUTH-1",
+            "issuer_tax_identifier": "SUP-1",
+            "issuer_name": "Supplier",
+            "taxable_base": Decimal("400.00"),
+            "total": Decimal("448.00"),
+            "taxes": [{
+                "id": uuid4(), "tax_code": "VAT", "tax_category": "TAXABLE",
+                "taxable_base": Decimal("400.00"), "amount": Decimal("48.00"),
+            }],
+        }
+        document.update(overrides)
+        
+        return document
+
+    def test_general_tax_report_uses_persisted_documents_and_period_result(self):
+        sales = [{
+            "fecha": date(2026, 1, 12), "subtotal": Decimal("1000"),
+            "descuento": Decimal("0"), "impuesto": Decimal("120"),
+            "tasa_impuesto": Decimal("0.12"), "total": Decimal("1120"),
+            "es_exenta": False, "cliente_nombre": "Customer",
+        }]
+        debit = {"fiscal_debit": Decimal("120")}
+        document = self._document()
+        period = {
+            "tax_debit": Decimal("120"), "tax_credit": Decimal("48"),
+            "net_tax": Decimal("72"), "tax_payable": Decimal("72"),
+            "carry_forward": Decimal("0"),
+            "details": [{
+                "document_id": document["id"], "taxable_base": Decimal("400"),
+                "eligible_for_input_credit": True, "tax_amount": Decimal("48"),
+            }],
+        }
+        profile = SimpleNamespace(taxes=[SimpleNamespace(tax_code="VAT")])
+        
+        with patch.object(reports_service, "_get_fiscal_debit_for_report", return_value=debit), \
+             patch.object(reports_service, "_get_input_documents_for_report", return_value=[document]), \
+             patch.object(reports_service, "_resolve_report_profile", return_value=profile), \
+             patch.object(reports_service.tax_period, "calculate_period", return_value=period):
+            report = build_tax_report(
+                make_user(), FakeDB([sales, debit]), regime="GENERAL_VAT",
+                start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            )
+
+        purchases, _sales, summary = report.sheets
+        self.assertEqual(purchases.rows[0][7], Decimal("400.00"))
+        self.assertEqual(purchases.rows[0][8], Decimal("48.00"))
+        self.assertEqual(purchases.rows[0][9], Decimal("448.00"))
+        self.assertEqual(summary.rows[1][1], Decimal("120.00"))
+        self.assertEqual(summary.rows[2][1], Decimal("400.00"))
+        self.assertEqual(summary.rows[3][1], Decimal("48.00"))
+        self.assertEqual(summary.rows[4][1], Decimal("72.00"))
+
+    def test_purchase_report_preserves_missing_values_and_tax_semantics(self):
+        document = self._document(
+            taxable_base=None, total=None,
+            taxes=[{
+                "id": uuid4(), "tax_code": "OTHER_TAX", "tax_category": "EXEMPT",
+                "taxable_base": Decimal("0"), "amount": Decimal("0"),
+            }],
+        )
+        profile = SimpleNamespace(taxes=[SimpleNamespace(tax_code="VAT")])
+        rows = reports_service._build_tax_purchase_rows([document], "GENERAL_VAT", profile)
+        self.assertIsNone(rows[0][7])
+        self.assertIsNone(rows[0][8])
+        self.assertIsNone(rows[0][9])
+
+    def test_general_purchase_report_reads_line_tax_once(self):
+        document = self._document(
+            taxes=[{"id": "document-vat", "tax_code": "VAT", "tax_category": "TAXABLE", "amount": Decimal("48.00")}],
+            lines=[
+                {"taxes": [{"id": "line-vat-1", "tax_code": "VAT", "category": "TAXABLE", "amount": Decimal("18.00")}]},
+                {"taxes": [{"id": "line-vat-2", "tax_code": "VAT", "category": "TAXABLE", "amount": Decimal("30.00")}]},
+            ],
+        )
+        profile = SimpleNamespace(taxes=[SimpleNamespace(tax_code="VAT")])
+
+        rows = reports_service._build_tax_purchase_rows([document], "GENERAL_VAT", profile)
+
+        self.assertEqual(rows[0][8], Decimal("48.00"))
 
 def make_user():
     company = SimpleNamespace(is_active=True, schema_name=SCHEMA_NAME, name="Flow Desk SA")
@@ -644,6 +737,126 @@ class ReportEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    def test_tax_report_returns_a_valid_small_taxpayer_workbook(self):
+        sales = [{
+            "fecha": datetime(2026, 8, 20, 10, 0),
+            "subtotal": Decimal("100.00"),
+            "descuento": Decimal("0.00"),
+            "impuesto": Decimal("12.00"),
+            "tasa_impuesto": Decimal("12.00"),
+            "total": Decimal("112.00"),
+            "es_exenta": False,
+            "cliente_nombre": "Cliente A",
+        }]
+        debit_rows = [{"subtotal": Decimal("100.00"), "impuesto": Decimal("12.00"), "es_exenta": False}]
+        db = FakeDB([sales, debit_rows, []])
+
+        response = make_client(db).get(
+            "/api/v1/reports/tributario?regime=SMALL_TAXPAYER&period=custom"
+            "&start_date=2026-08-01&end_date=2026-08-31"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.assertIn("reporte_tributario_", response.headers["content-disposition"])
+        workbook = load_workbook(BytesIO(response.content), data_only=True)
+        self.assertEqual(workbook.sheetnames, ["Compras", "Ventas", "Resumen"])
+        self.assertEqual(list(workbook["Ventas"].values)[0], (
+            "No.", "Fecha", "Número Factura", "NIT Comprador", "Nombre Comprador", "Total Venta"
+        ))
+        self.assertEqual(workbook["Ventas"].cell(2, 5).value, "Cliente A")
+        self.assertEqual(workbook["Ventas"].cell(2, 6).value, 112)
+        self.assertEqual(workbook["Compras"].max_row, 1)
+        self.assertEqual(workbook["Resumen"].cell(3, 2).value, 12)
+        self.assertIsNone(workbook["Resumen"].cell(5, 2).value)
+        history_params = db.statements[-1].compile().params
+        self.assertEqual(history_params["tipo"], "tributario")
+        self.assertEqual(history_params["formato"], "xlsx")
+        self.assertEqual(history_params["periodo_inicio"], date(2026, 8, 1))
+        self.assertEqual(history_params["periodo_fin"], date(2026, 8, 31))
+
+    def test_tax_report_rejects_an_unknown_regime(self):
+        db = FakeDB([])
+
+        response = make_client(db).get("/api/v1/reports/tributario?regime=UNKNOWN")
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(db.statements, [])
+
+    def test_tax_report_requires_admin_role(self):
+        db = FakeDB([])
+
+        response = make_client(db, role="employee").get(
+            "/api/v1/reports/tributario?regime=GENERAL_VAT"
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(db.statements, [])
+
+class TaxWorkbookTests(unittest.TestCase):
+    def test_general_vat_sales_are_chronological_and_use_numeric_amounts(self):
+        rows = [
+            {
+                "fecha": datetime(2026, 8, 1), "subtotal": Decimal("50.00"),
+                "descuento": Decimal("5.00"), "impuesto": Decimal("5.40"),
+                "tasa_impuesto": Decimal("12.00"), "total": Decimal("50.40"),
+                "es_exenta": False, "cliente_nombre": "Primero",
+            },
+            {
+                "fecha": datetime(2026, 8, 3), "subtotal": Decimal("100.00"),
+                "descuento": Decimal("0.00"), "impuesto": Decimal("15.00"),
+                "tasa_impuesto": Decimal("15.00"), "total": Decimal("115.00"),
+                "es_exenta": False, "cliente_nombre": "Segundo",
+            },
+        ]
+        debit_rows = [
+            {"subtotal": row["subtotal"], "impuesto": row["impuesto"], "es_exenta": False}
+            for row in rows
+        ]
+        report = build_tax_report(
+            make_user(), FakeDB([rows, debit_rows]), regime="GENERAL_VAT",
+            period="custom", start_date=date(2026, 8, 1), end_date=date(2026, 8, 31),
+        )
+
+        payload = render_xlsx(report)
+        workbook = load_workbook(BytesIO(payload), data_only=True)
+        self.assertEqual(report.sheets[1].columns, [
+            "No.", "Fecha", "Tipo Documento", "Serie / Autorización", "Número Documento",
+            "NIT", "Nombre", "Valor Neto / Base", "IVA", "Total Documento",
+        ])
+        self.assertEqual(workbook["Ventas"].cell(2, 7).value, "Primero")
+        self.assertEqual(workbook["Ventas"].cell(3, 8).value, 100)
+        self.assertEqual(workbook["Ventas"].cell(3, 9).value, 15)
+        self.assertEqual(workbook["Ventas"].cell(2, 2).value.date(), date(2026, 8, 1))
+        self.assertEqual(workbook["Resumen"].cell(3, 2).value, 20.4)
+        self.assertIsNone(workbook["Resumen"].cell(4, 2).value)
+        self.assertIsNone(workbook["Resumen"].cell(5, 2).value)
+        self.assertIsNone(workbook["Resumen"].cell(6, 2).value)
+        self.assertEqual(report.sheets[0].rows, [])
+
+    def test_xlsx_renderer_preserves_empty_reports_and_neutralizes_formula_text(self):
+        report = ReportDataset(
+            title="Prueba / XLSX",
+            columns=["Nombre", "Monto"],
+            rows=[["=1+1", Decimal("12.34")]],
+            metadata={},
+        )
+
+        workbook = load_workbook(BytesIO(render_xlsx(report)), data_only=False)
+
+        self.assertEqual(workbook.sheetnames, ["Prueba _ XLSX"])
+        self.assertEqual(workbook.active.cell(2, 1).value, "'=1+1")
+        self.assertEqual(workbook.active.cell(2, 2).value, 12.34)
+
+    def test_tax_report_has_empty_sales_and_zero_debit_without_data(self):
+        report = build_tax_report(
+            make_user(), FakeDB([[], []]), regime="SMALL_TAXPAYER",
+            period="custom", start_date=date(2026, 8, 1), end_date=date(2026, 8, 31),
+        )
+
+        self.assertEqual(report.sheets[1].rows, [])
+        self.assertEqual(report.sheets[2].rows[0][1], Decimal("0.00"))
+        self.assertIsNone(report.sheets[2].rows[1][1])
 
 if __name__ == "__main__":
     unittest.main()

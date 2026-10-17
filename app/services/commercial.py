@@ -9,9 +9,11 @@ from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate, TaxCo
 from app.services.inventory import _sync_stock_alerts
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
+from app.taxation.legacy import resolve_legacy_sales_rate
 
 MONEY_QUANTUM = Decimal("0.01")
 MAX_TAX_RATE = Decimal("100")
+DEFAULT_TAX_RATE = Decimal("0.00")
 
 def list_clients(
     current_user,
@@ -436,20 +438,38 @@ def list_client_purchases(
     tables = _tenant_tables(current_user)
     clients = tables["cliente"]
     sales = tables["venta"]
+    sale_items = tables["detalle_venta"]
     client = db.execute(select(clients).where(clients.c.id == client_id)).mappings().first()
     if client is None:
         raise AppError(status_code=404, message="Client not found")
-    sale_ids = [
-        row[0]
-        for row in db.execute(
-            select(sales.c.id)
-            .where(sales.c.cliente_id == client_id)
-            .order_by(sales.c.fecha.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+    page = db.execute(
+        select(sales)
+        .where(sales.c.cliente_id == client_id)
+        .order_by(sales.c.fecha.desc())
+        .limit(limit)
+        .offset(offset)
+    ).mappings().all()
+    if not page:
+        return []
+
+    # Same shape as get_sale, with the items of the whole page in one query instead
+    # of two queries per sale.
+    items = {}
+    for row in db.execute(
+        select(sale_items)
+        .where(sale_items.c.venta_id.in_([sale["id"] for sale in page]))
+        .order_by(sale_items.c.id.asc())
+    ).mappings():
+        items.setdefault(row["venta_id"], []).append(dict(row))
+    return [
+        {
+            **sale,
+            "cliente_nombre": client["nombre"],
+            "consumidor_final": False,
+            "items": items.get(sale["id"], []),
+        }
+        for sale in page
     ]
-    return [get_sale(sale_id, current_user, db, client_name=client["nombre"]) for sale_id in sale_ids]
 
 
 PENDING_SALE_STATES = ("borrador",)
@@ -546,12 +566,4 @@ def _round_money(value: Decimal) -> Decimal:
     return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 def _get_tax_rate(db: Session, configuration) -> Decimal:
-    row = db.execute(
-        select(configuration.c.tasa_impuesto)
-        .order_by(configuration.c.updated_at.desc(), configuration.c.created_at.desc())
-        .limit(1)
-    ).mappings().first()
-
-    if row is None:
-        return Decimal("0")
-    return _decimal(row["tasa_impuesto"])
+    return resolve_legacy_sales_rate(db, configuration)

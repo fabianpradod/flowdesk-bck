@@ -48,6 +48,40 @@ def get_sales_metrics(
         **summarize_sales(rows),
     }
 
+def get_fiscal_debit(
+    current_user: User,
+    db: Session,
+    *,
+    period: AnalyticsPeriod,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    """Summarize tax debit from finalized sales for the authenticated tenant."""
+    analytics_range = _resolve_analytics_range(period, start_date, end_date)
+    sales = _analytics_tables(current_user)["venta"]
+    query = select(sales.c.subtotal, sales.c.impuesto, sales.c.es_exenta).where(
+        sales.c.fecha >= analytics_range["start"],
+        sales.c.fecha <= analytics_range["end"],
+        func.lower(sales.c.estado).in_(FINAL_SALE_STATES),
+    )
+    rows = [dict(row) for row in db.execute(query).mappings()]
+    taxable_rows = [row for row in rows if not row["es_exenta"]]
+    exempt_rows = [row for row in rows if row["es_exenta"]]
+    taxable_subtotal = sum((_decimal(row["subtotal"]) for row in taxable_rows), Decimal("0"))
+    exempt_subtotal = sum((_decimal(row["subtotal"]) for row in exempt_rows), Decimal("0"))
+    fiscal_debit = sum((_decimal(row["impuesto"]) for row in taxable_rows), Decimal("0"))
+    return {
+        "period": period,
+        "start_date": analytics_range["start"].date(),
+        "end_date": analytics_range["end"].date(),
+        "sales_count": len(rows),
+        "taxable_sales_count": len(taxable_rows),
+        "exempt_sales_count": len(exempt_rows),
+        "taxable_subtotal": _money(taxable_subtotal),
+        "exempt_subtotal": _money(exempt_subtotal),
+        "fiscal_debit": _money(fiscal_debit),
+    }
+
 def get_sales_trend(
     current_user: User,
     db: Session,

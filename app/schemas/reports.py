@@ -1,18 +1,20 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
 
 ReportFormat = Literal["csv", "pdf"]
-ReportType = Literal["inventario", "movimientos", "alertas"]
+ReportType = Literal["inventario", "movimientos", "alertas", "tributario"]
+TaxReportRegime = Literal["SMALL_TAXPAYER", "GENERAL_VAT"]
 
 REPORT_MEDIA_TYPES: dict[str, str] = {
     "csv": "text/csv; charset=utf-8",
     "pdf": "application/pdf",
 }
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @dataclass
@@ -21,7 +23,19 @@ class ReportDataset:
 
     title: str
     columns: list[str]
-    rows: list[list[str]]
+    rows: list[list[Any]]
+    metadata: dict
+
+@dataclass
+class ReportSheet:
+    name: str
+    columns: list[str]
+    rows: list[list[Any]]
+
+@dataclass
+class ReportWorkbook:
+    title: str
+    sheets: list[ReportSheet]
     metadata: dict
 
 
