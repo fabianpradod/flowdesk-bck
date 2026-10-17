@@ -3,6 +3,32 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+SECRET_KEY_MIN_BYTES = 32
+INSECURE_SECRET_KEYS = frozenset({
+    "secret",
+    "secret-key",
+    "changeme",
+    "change-me",
+    "development-secret",
+    "test-secret",
+    "replace-with-a-long-random-value",
+    "your-secret-key",
+    "your-secret-key-here",
+})
+
+def validate_secret_key(secret_key: str | None) -> str:
+    """Validate the signing key without exposing it in an error message."""
+    if secret_key is None or not secret_key.strip():
+        raise ValueError("SECRET_KEY must be configured")
+
+    if len(secret_key.encode("utf-8")) < SECRET_KEY_MIN_BYTES:
+        raise ValueError(f"SECRET_KEY must be at least {SECRET_KEY_MIN_BYTES} bytes")
+
+    if secret_key.strip().casefold() in INSECURE_SECRET_KEYS:
+        raise ValueError("SECRET_KEY contains an insecure placeholder")
+
+    return secret_key
+
 #Database
 DB_HOST     = os.getenv("DB_SERVER", "localhost")
 DB_NAME     = os.getenv("DB_DATABASE")
@@ -23,7 +49,7 @@ if DB_MAX_OVERFLOW < 0:
     raise ValueError("DB_MAX_OVERFLOW must be non-negative for bounded request admission")
 
 #Auth
-SECRET_KEY  = os.getenv("SECRET_KEY")
+SECRET_KEY  = validate_secret_key(os.getenv("SECRET_KEY"))
 ALGORITHM   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
