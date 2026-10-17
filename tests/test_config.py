@@ -1,4 +1,6 @@
+import importlib
 import pytest
+from app.core import config
 from app.core.config import SECRET_KEY, SECRET_KEY_MIN_BYTES, validate_secret_key
 from app.core.security import create_access_token, decode_access_token
 
@@ -46,6 +48,16 @@ def test_valid_secret_key_is_accepted_in_production_and_development():
     secret_key = "valid-signing-key-with-at-least-thirty-two-bytes"
 
     assert validate_secret_key(secret_key) == secret_key
+
+def test_access_token_expiration_can_be_configured_without_exposing_secret(monkeypatch):
+    monkeypatch.setenv("ACCESS_TOKEN_EXPIRE_MINUTES", "45")
+    importlib.reload(config)
+
+    try:
+        assert config.ACCESS_TOKEN_EXPIRE_MINUTES == 45
+    finally:
+        monkeypatch.delenv("ACCESS_TOKEN_EXPIRE_MINUTES", raising=False)
+        importlib.reload(config)
 
 def test_jwt_round_trip_uses_the_configured_secret():
     token = create_access_token({"sub": "configuration-test"})

@@ -199,6 +199,37 @@ def test_invalid_token_and_invalid_password_are_rejected_without_writes(client, 
     assert user.password == previous_password
     assert user.is_active is previous_active
 
+@pytest.mark.parametrize("missing_purpose", [False, True])
+@pytest.mark.parametrize("path, email, purpose", [
+    ("/api/v1/auth/password/set", "inactive@test.com", "set_password"),
+    ("/api/v1/auth/password/reset", "admin.demo@flowdesk.com", "reset_password"),
+])
+def test_password_endpoints_reject_tampered_or_purposeless_tokens_without_writes(
+    client, path, email, purpose, missing_purpose
+):
+    user = _user(email)
+    previous_password = user.password
+    previous_active = user.is_active
+    claims = {"sub": str(user.id)}
+    if not missing_purpose:
+        claims["purpose"] = purpose
+    token = _password_token(user, purpose) if not missing_purpose else create_access_token(claims)
+
+    if not missing_purpose:
+        parts = token.split(".")
+        parts[-1] = ("A" if parts[-1][0] != "A" else "B") + parts[-1][1:]
+        token = ".".join(parts)
+
+    response = client.post(
+        path,
+        json={"token": token, "new_password": "NewValidPassword123!"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Invalid or expired token"
+    assert user.password == previous_password
+    assert user.is_active is previous_active
+
 def test_reset_rejects_reusing_current_password(client):
     user = _user("admin.demo@flowdesk.com")
     previous_hash = user.password

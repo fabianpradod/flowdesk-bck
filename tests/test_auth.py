@@ -27,7 +27,8 @@ def test_login_invalid_password():
             "password": "wrongpassword"
         }
     )
-    assert response.status_code in [400, 401]
+    assert response.status_code == 401
+    assert response.json()["message"] == "Invalid credentials"
 
 def test_login_nonexistent_user():
     response = client.post(
@@ -37,7 +38,22 @@ def test_login_nonexistent_user():
             "password": "123456"
         }
     )
-    assert response.status_code in [400, 401]
+    assert response.status_code == 401
+    assert response.json()["message"] == "Invalid credentials"
+
+def test_login_does_not_disclose_user_existence():
+    invalid_password = client.post(
+        "/api/v1/auth/login",
+        json={"email": "admin.demo@flowdesk.com", "password": "WrongPassword123!"},
+    )
+    unknown_user = client.post(
+        "/api/v1/auth/login",
+        json={"email": "missing-user@test.com", "password": "WrongPassword123!"},
+    )
+
+    assert invalid_password.status_code == 401
+    assert unknown_user.status_code == 401
+    assert invalid_password.json() == unknown_user.json()
 
 def test_login_inactive_user():
     response = client.post(
@@ -66,7 +82,7 @@ def test_reset_password():
             "new_password": "newpassword123"
         }
     )
-    assert response.status_code in [200, 400, 401]
+    assert response.status_code == 400
 
 def test_set_password():
     response = client.post(
@@ -76,7 +92,7 @@ def test_set_password():
             "new_password":"SetPassword123!"
         }
     )
-    assert response.status_code in [200, 400, 401]
+    assert response.status_code == 400
 
 def test_reuse_old_password():
     response = client.post(
@@ -86,7 +102,7 @@ def test_reuse_old_password():
             "new_password": "AnotherPassword123!"
         }
     )
-    assert response.status_code in [400, 401]
+    assert response.status_code == 400
 
 def test_login_without_password():
     response = client.post(
@@ -97,7 +113,7 @@ def test_login_without_password():
         }
     )
 
-    assert response.status_code in [401,422]
+    assert response.status_code == 401
 
 def test_login_invalid_payload():
     response = client.post(
@@ -200,7 +216,7 @@ def test_reset_password_empty_token():
         }
     )
 
-    assert response.status_code in [400,401]
+    assert response.status_code == 400
 
 def test_set_password_empty_token():
     response = client.post(
@@ -211,7 +227,7 @@ def test_set_password_empty_token():
         }
     )
 
-    assert response.status_code in [400,401]
+    assert response.status_code == 400
 
 def test_login_invalid_email_format():
     response = client.post(
