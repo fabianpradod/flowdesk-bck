@@ -1,0 +1,112 @@
+name: FlowDesk backend tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DB_SERVER: localhost
+  DB_PORT: '5432'
+  DB_DATABASE: flowdesk_ci
+  DB_USERNAME: flowdesk_ci
+  DB_PASSWORD: ci-only-password
+  SECRET_KEY: ci-only-signing-key-for-disposable-tests
+  SUPERADMIN_EMAIL: superadmin@example.com
+  SUPERADMIN_USERNAME: superadmin
+  SUPERADMIN_PASSWORD: CiPassword123!
+  FRONTEND_URL: http://localhost:5173
+  SMTP_USERNAME: ci@example.com
+  SMTP_PASSWORD: unused-in-ci
+  ZAI_API_KEY: ''
+  DEMO_SEED_ENABLED: 'true'
+  DEMO_USER_PASSWORD: Demo12345!
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: mkdir -p reports
+      - name: Install test dependencies
+        id: install
+        run: python -m pip install -r requirements-dev.txt
+      - name: Existing regression gate
+        run: |
+          set -o pipefail
+          python -m pytest tests/test_sprint_regression.py -v --junitxml=reports/regression.xml 2>&1 | tee reports/regression.log
+      - name: Complete suite and coverage
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          python -m pytest tests -v --junitxml=reports/suite.xml --cov=app --cov-report=xml:reports/coverage.xml --cov-report=html:reports/coverage --cov-report=term-missing 2>&1 | tee reports/suite.log
+      - name: Summarize evidence
+        if: always()
+        run: python scripts/ci_summary.py
+      - name: Preserve reports even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-suite-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: error
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: flowdesk_ci
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: flowdesk_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowdesk_ci -d flowdesk_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: mkdir -p reports
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Start real API and wait for PostgreSQL readiness
+        run: |
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > reports/api.log 2>&1 &
+          echo $! > reports/api.pid
+          curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors http://127.0.0.1:8000/ready
+      - name: API, authentication and persistence integration
+        run: |
+          set -o pipefail
+          python -m pytest integration -v --junitxml=reports/integration.xml 2>&1 | tee reports/integration.log
+      - name: Stop API
+        if: always()
+        run: |
+          if [ -f reports/api.pid ]; then kill "$(cat reports/api.pid)" || true; fi
+      - name: Summarize evidence
+        if: always()
+        run: python scripts/ci_summary.py
+      - name: Preserve reports even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: error
