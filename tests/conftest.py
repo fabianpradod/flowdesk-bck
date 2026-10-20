@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -7,6 +8,11 @@ from unittest.mock import patch
 from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
+
+# Tests use a deterministic non-production signing key before importing the app.
+# This keeps configuration tests independent from a developer's .env file.
+os.environ.setdefault("SECRET_KEY", "test-only-jwt-signing-key-for-flowdesk-tests-2026")
+
 import app.services.auth as auth_service
 from app.api.dependencies.auth import get_current_user, get_db
 from app.core.config import DEMO_USER_PASSWORD

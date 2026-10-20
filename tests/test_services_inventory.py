@@ -1541,6 +1541,97 @@ def test_create_inventory_movement_outbound(inventory_db):
 
     assert result["stock_resultante"] == Decimal("7")
 
+@pytest.mark.parametrize(
+    ("movement_type", "quantity", "expected_stock"),
+    [
+        ("ajuste_positivo", Decimal("2.25"), Decimal("12.25")),
+        ("ajuste_negativo", Decimal("3.50"), Decimal("6.50")),
+    ],
+)
+def test_inventory_adjustment_persists_stock_and_history_after_new_session(
+    inventory_db, movement_type, quantity, expected_stock
+):
+    db, tables, user = inventory_db
+    product_id = _insert_product(db, tables, stock=Decimal("10"))
+    bind = db.get_bind()
+
+    result = inventory_service.create_inventory_movement(
+        InventoryMovementCreate(
+            producto_id=product_id,
+            tipo_movimiento=movement_type,
+            cantidad=quantity,
+            motivo="Corrección de inventario",
+        ),
+        user,
+        db,
+    )
+    movement_id = result["id"]
+    db.close()
+
+    reopened = Session(bind=bind, expire_on_commit=False)
+    try:
+        product = reopened.execute(
+            select(tables["producto"]).where(tables["producto"].c.id == _id(product_id))
+        ).mappings().one()
+        movement = reopened.execute(
+            select(tables["movimiento_inventario"]).where(
+                tables["movimiento_inventario"].c.id == _id(movement_id)
+            )
+        ).mappings().one()
+
+        assert product["stock_actual"] == expected_stock
+        assert movement["tipo_movimiento"] == movement_type
+        assert movement["cantidad"] == quantity
+        assert movement["stock_anterior"] == Decimal("10.00")
+        assert movement["stock_resultante"] == expected_stock
+        assert movement["motivo"] == "Corrección de inventario"
+        assert movement["usuario_id"] == _id(user.id)
+    finally:
+        reopened.close()
+
+def test_inventory_adjustment_rolls_back_stock_and_history_on_alert_failure(
+    inventory_db, monkeypatch
+):
+    db, tables, user = inventory_db
+    product_id = _insert_product(db, tables, stock=Decimal("10"))
+    bind = db.get_bind()
+
+    def fail_alert_sync(**_kwargs):
+        raise RuntimeError("synthetic alert failure")
+
+    monkeypatch.setattr(inventory_service, "_sync_stock_alerts", fail_alert_sync)
+
+    with pytest.raises(AppError) as error:
+        inventory_service.create_inventory_movement(
+            InventoryMovementCreate(
+                producto_id=product_id,
+                tipo_movimiento="ajuste_positivo",
+                cantidad=Decimal("2"),
+                motivo="Debe revertirse",
+            ),
+            user,
+            db,
+        )
+
+    assert error.value.status_code == 500
+    db.close()
+
+    reopened = Session(bind=bind, expire_on_commit=False)
+    try:
+        product = reopened.execute(
+            select(tables["producto"]).where(tables["producto"].c.id == _id(product_id))
+        ).mappings().one()
+        movements = reopened.execute(
+            select(tables["movimiento_inventario"]).where(
+                tables["movimiento_inventario"].c.producto_id == _id(product_id)
+            )
+        ).mappings().all()
+
+        assert product["stock_actual"] == Decimal("10.00")
+        assert movements == []
+    finally:
+        reopened.close()
+
 def test_create_inventory_movement_product_not_found(inventory_db,):
     db, tables, user = inventory_db
 

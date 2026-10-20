@@ -1,8 +1,15 @@
 from uuid import uuid4
+from types import SimpleNamespace
 import pytest
-from sqlalchemy import Boolean, DateTime, MetaData, Numeric, String, Table, create_engine, insert, select
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import Boolean, DateTime, MetaData, Numeric, String, Table, create_engine, insert, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import TypeDecorator
+from app.api.dependencies.auth import get_current_user, get_db
+from app.api.v1.routes.commercial import router as commercial_router
 from app.services import commercial as commercial_service
 from app.utils.exceptions import AppError
 from app.schemas.commercial import ClientCreate, ClientUpdate
@@ -28,6 +35,8 @@ def commercial_db(monkeypatch):
     engine = create_engine(
         "sqlite:///:memory:",
         future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
 
     metadata = MetaData()
@@ -70,11 +79,13 @@ def commercial_db(monkeypatch):
             "created_at",
             DateTime,
             nullable=True,
+            server_default=text("CURRENT_TIMESTAMP"),
         ),
         __import__("sqlalchemy").Column(
             "updated_at",
             DateTime,
             nullable=True,
+            server_default=text("CURRENT_TIMESTAMP"),
         ),
     )
 
@@ -170,6 +181,161 @@ def _row(db, clients, client_id):
     return db.execute(
         select(clients).where(clients.c.id == str(client_id))
     ).mappings().first()
+
+def _new_session_factory(db):
+    """Create an independent session bound to the same test engine."""
+    return sessionmaker(
+        bind=db.get_bind(),
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+def test_create_client_survives_session_close_and_reopen(commercial_db):
+    db, clients, user = commercial_db
+    SessionLocal = _new_session_factory(db)
+
+    result = commercial_service.create_client(
+        ClientCreate(
+            nombre="Persisted Client",
+            telefono="5550001",
+            correo="persisted@example.com",
+            direccion="Persisted address",
+        ),
+        user,
+        db,
+    )
+    client_id = result["id"]
+
+    db.close()
+    reopened = SessionLocal()
+    try:
+        row = _row(reopened, clients, client_id)
+        assert row is not None
+        assert row["id"] == str(client_id)
+        assert row["nombre"] == "Persisted Client"
+        assert row["telefono"] == "5550001"
+        assert row["correo"] == "persisted@example.com"
+        assert row["direccion"] == "Persisted address"
+    finally:
+        reopened.close()
+
+def test_update_client_is_visible_from_a_new_session(commercial_db):
+    db, clients, user = commercial_db
+    client_id = _insert_client(db)
+    SessionLocal = _new_session_factory(db)
+
+    db.close()
+    update_session = SessionLocal()
+    try:
+        commercial_service.update_client(
+            client_id,
+            ClientUpdate(nombre="Updated after reopen", telefono="5559999"),
+            user,
+            update_session,
+        )
+    finally:
+        update_session.close()
+
+    verification_session = SessionLocal()
+    try:
+        row = _row(verification_session, clients, client_id)
+        assert row["nombre"] == "Updated after reopen"
+        assert row["telefono"] == "5559999"
+    finally:
+        verification_session.close()
+
+def test_delete_client_is_visible_from_a_new_session(commercial_db):
+    db, clients, user = commercial_db
+    client_id = _insert_client(db)
+    SessionLocal = _new_session_factory(db)
+
+    db.close()
+    delete_session = SessionLocal()
+    try:
+        commercial_service.delete_client(client_id, user, delete_session)
+    finally:
+        delete_session.close()
+
+    verification_session = SessionLocal()
+    try:
+        row = _row(verification_session, clients, client_id)
+        assert row is not None
+        assert row["is_active"] is False
+    finally:
+        verification_session.close()
+
+def test_create_client_endpoint_persists_after_request_session_ends(commercial_db):
+    db, clients, _user = commercial_db
+    SessionLocal = _new_session_factory(db)
+    app = FastAPI()
+    app.include_router(commercial_router)
+    request_sessions = []
+
+    def request_db():
+        session = SessionLocal()
+        request_sessions.append(session)
+        return session
+
+    app.dependency_overrides[get_db] = request_db
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        role=SimpleNamespace(name="manager"),
+    )
+
+    try:
+        response = TestClient(app).post(
+            "/api/v1/commercial/clients",
+            json={
+                "nombre": "Endpoint persisted",
+                "telefono": "5551234",
+                "correo": "endpoint@example.com",
+                "direccion": "Endpoint address",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+        for session in request_sessions:
+            session.close()
+
+    assert response.status_code == 200
+    client_id = response.json()["id"]
+    db.close()
+    reopened = SessionLocal()
+    try:
+        row = _row(reopened, clients, client_id)
+        assert row is not None
+        assert row["nombre"] == "Endpoint persisted"
+        assert row["correo"] == "endpoint@example.com"
+    finally:
+        reopened.close()
+
+def test_create_client_commit_failure_rolls_back_uncommitted_row(commercial_db, monkeypatch):
+    db, clients, user = commercial_db
+    SessionLocal = _new_session_factory(db)
+
+    def fail_commit():
+        raise SQLAlchemyError("forced test commit failure")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+    with pytest.raises(AppError) as exc:
+        commercial_service.create_client(
+            ClientCreate(
+                nombre="Must not persist",
+                correo="rollback@example.com",
+            ),
+            user,
+            db,
+        )
+
+    assert exc.value.status_code == 500
+    db.close()
+    reopened = SessionLocal()
+    try:
+        row = reopened.execute(
+            select(clients).where(clients.c.correo == "rollback@example.com")
+        ).mappings().first()
+        assert row is None
+    finally:
+        reopened.close()
 
 def test_list_clients_returns_active_clients(commercial_db):
     db, clients, user = commercial_db

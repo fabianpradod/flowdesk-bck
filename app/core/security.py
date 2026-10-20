@@ -7,6 +7,32 @@ from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_BYTES = 72
+COMMON_WEAK_PASSWORDS = frozenset({
+    "12345678",
+    "admin123",
+    "letmein",
+    "password123",
+    "qwerty123",
+    "qwertyui",
+})
+
+def validate_password(password: str) -> str:
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters long")
+    if password.isspace():
+        raise ValueError("Password cannot contain only whitespace")
+    try:
+        password_bytes = password.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("Password contains invalid characters") from exc
+    if len(password_bytes) > PASSWORD_MAX_BYTES:
+        raise ValueError(f"Password cannot exceed {PASSWORD_MAX_BYTES} UTF-8 bytes")
+    if password.casefold() in COMMON_WEAK_PASSWORDS:
+        raise ValueError("Password is too common")
+    return password
+
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 

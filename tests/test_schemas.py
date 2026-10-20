@@ -53,6 +53,19 @@ def test_password_reset():
 
     assert data.token == "abc123"
 
+@pytest.mark.parametrize("schema", [PasswordSet, PasswordReset])
+@pytest.mark.parametrize("password", ["", "        ", "short", "12345678", "a" * 73, "á" * 37])
+def test_password_schemas_reject_invalid_passwords(schema, password):
+    with pytest.raises(ValidationError):
+        schema(token="abc123", new_password=password)
+
+@pytest.mark.parametrize("schema", [PasswordSet, PasswordReset])
+def test_password_schemas_accept_and_preserve_valid_passwords(schema):
+    password = " abc de "
+    data = schema(token="abc123", new_password=password)
+
+    assert data.new_password == password
+
 def test_supplier_create_rejects_an_invalid_email():
     with pytest.raises(ValidationError):
         SupplierCreate(

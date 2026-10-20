@@ -2,6 +2,7 @@ from uuid import UUID
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, model_validator
+from app.core.security import validate_password
 
 class UserBase(BaseModel):
     username: str
@@ -53,9 +54,13 @@ class UserLogin(BaseModel):
         }
     )
 
-class PasswordSet(BaseModel):
+class PasswordPayload(BaseModel):
     token: str        # from the email link
     new_password: str
+
+    _validate_new_password = field_validator("new_password")(validate_password)
+
+class PasswordSet(PasswordPayload):
 
     model_config = ConfigDict(
         json_schema_extra = {
@@ -67,10 +72,7 @@ class PasswordSet(BaseModel):
     )
 
 
-class PasswordReset(BaseModel):
-    token: str
-    new_password: str
-
+class PasswordReset(PasswordPayload):
     model_config = ConfigDict(
         json_schema_extra = {
             "example": {

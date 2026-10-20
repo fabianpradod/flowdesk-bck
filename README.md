@@ -259,6 +259,30 @@ Cada generación queda registrada en la tabla `reporte` del esquema de la empres
 consulta con `GET /history`. El archivo no se almacena en el servidor — se transmite
 directamente al cliente, por lo que `ruta_archivo` siempre viene en `null`.
 
+El registro persistente de auditoría de reportes contiene `id`, `tipo`, `periodo_inicio`,
+`periodo_fin`, `formato`, `estado`, `generado_por_usuario_id`, `fecha_generacion` y
+`ruta_archivo`. Los tipos registrados son `inventario`, `movimientos`, `alertas` y
+`tributario`. `estado` queda en `generado` cuando la generación y el registro terminan
+correctamente; `ruta_archivo` permanece en `null` porque el archivo se transmite directamente
+al cliente y no se almacena en el servidor.
+
+`id` identifica el registro; `tipo` y `formato` describen el reporte; los campos de período
+conservan el rango cuando fue solicitado; `generado_por_usuario_id` identifica al actor;
+`fecha_generacion` conserva el momento de generación; y `estado` refleja el resultado
+persistido. No existe un identificador de correlación independiente del `id` del registro.
+
+El registro se inserta después de renderizar el reporte y se confirma con la misma sesión.
+Si falla la inserción del historial, la transacción se revierte y la API devuelve un error
+genérico. `GET /api/v1/reports/history` requiere autenticación y rol `admin` o superior,
+y resuelve la tabla `reporte` desde la empresa del usuario autenticado; el cliente no
+selecciona el esquema mediante el request.
+
+Este historial de reportes es el único mecanismo persistente de auditoría identificado.
+Los mensajes emitidos mediante `logger` son logs operativos y no constituyen por sí mismos
+un historial consultable desde la API. Actualmente no hay un registro persistente general
+documentado para inicios de sesión, fallos de autenticación, usuarios, roles, clientes,
+ventas, inventario, configuración tributaria, documentos fiscales o importaciones.
+
 El CSV se genera con BOM UTF-8 para que Excel muestre bien los acentos, y las celdas que
 empiezan con `=`, `+`, `-` o `@` se escapan para evitar inyección de fórmulas.
 
