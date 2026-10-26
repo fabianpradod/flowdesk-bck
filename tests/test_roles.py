@@ -23,30 +23,8 @@ def login_admin(client: TestClient) -> str:
 def build_valid_import_xlsx() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(
-        [
-            "ID",
-            "Nombre",
-            "Stock Actual",
-            "Stock Minimo",
-            "Precio",
-            "Proveedor",
-            "Descripcion",
-            "Estado",
-        ]
-    )
-    sheet.append(
-        [
-            None,
-            "Producto demo",
-            10,
-            5,
-            12.50,
-            "Proveedor demo",
-            "Descripcion demo",
-            "Activo",
-        ]
-    )
+    sheet.append(["sku", "nombre", "descripcion", "precio_venta", "stock_minimo", "unidad_medida"])
+    sheet.append(["demo-001", "Producto demo", "Descripcion demo", 12.50, 5, "unidad"])
 
     buffer = BytesIO()
     workbook.save(buffer)

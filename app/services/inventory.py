@@ -27,7 +27,6 @@ from app.schemas.inventory import (
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError, ProductImportError
 from fastapi import UploadFile
-from app.utils.excel import load_excel_rows
 from app.utils.logger import logger
 from app.core.config import MAX_IMPORT_FILE_SIZE
 
