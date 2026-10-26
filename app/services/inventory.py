@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.users import User
 from app.schemas.inventory import (
+    ADJUSTMENT_TYPES,
     AnalyticsPeriod,
     AnalyticsWindow,
     InventoryMovementCreate,
@@ -939,7 +940,8 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     ).mappings().first()
     if product is None:
         raise AppError(status_code=404, message="Product not found")
-    if not product["is_active"]:
+    # Adjustments stay open so leftover stock can be corrected after deactivation.
+    if not product["is_active"] and data.tipo_movimiento not in ADJUSTMENT_TYPES:
         raise AppError(status_code=400, message="Product is inactive")
 
     direction = _movement_direction(data.tipo_movimiento)

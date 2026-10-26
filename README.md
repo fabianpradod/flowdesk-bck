@@ -297,6 +297,9 @@ en la misma transacción, y el stock nunca queda negativo (400).
   una venta.
 - Los ajustes (`ajuste_positivo`, `ajuste_negativo`) exigen `motivo`; sin él la
   respuesta es 422. En los demás tipos el motivo es opcional.
+- Un producto inactivo no se vende ni acepta movimientos manuales (400), salvo
+  ajustes: así se corrige o se da de baja el stock que le quedó. Las anulaciones
+  de ventas también le devuelven su stock.
 
 ### Reportes — `/api/v1/reports`
 
