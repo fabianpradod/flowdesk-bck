@@ -1,9 +1,11 @@
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.models.users import User
 from app.models.roles import Role
 from app.schemas.users import UserUpdate, UserStatusUpdate
 from app.utils.exceptions import AppError
+from app.utils.logger import logger
 
 
 def get_users(db: Session, current_user) -> list[User]:
@@ -45,7 +47,7 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
 
     for field, value in changes.items():
         setattr(user, field, value)
-    db.commit()
+    _commit_user_changes(db, user_id)
     db.refresh(user)
     return user
 
@@ -87,3 +89,16 @@ def _assert_username_available(db: Session, username: str) -> None:
     # index caught the duplicate and the request answered 500.
     if db.query(User).filter(User.username == username).first():
         raise AppError(400, "Username already registered")
+
+
+def _commit_user_changes(db: Session, user_id: UUID) -> None:
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another request took the username between the check and the commit.
+        db.rollback()
+        raise AppError(400, "Username already registered")
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to update user %s", user_id)
+        raise AppError(500, "Failed to update user")

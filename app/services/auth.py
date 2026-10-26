@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 
@@ -149,15 +150,7 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
             code="invalid_employee_role",
         )
 
-    # Emails are unique across companies: login finds the user by email alone.
-    # Checking only this company let the insert hit the unique index, a 500.
-    existing = db.query(User).filter(User.email == data.email).first()
-    if existing:
-        raise AppError(status_code=400, message="Email already registered")
-
-    existing_username = db.query(User).filter(User.username == data.username).first()
-    if existing_username:
-        raise AppError(status_code=400, message="Username already registered")
+    _assert_employee_identity_available(db, data.email, data.username)
 
     employee = User(
         username=data.username,
@@ -167,7 +160,13 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
         company_id=target_company_id,
     )
     db.add(employee)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another request registered the same email or username after the check.
+        db.rollback()
+        _assert_employee_identity_available(db, data.email, data.username)
+        raise AppError(status_code=400, message="Email or username already registered")
     db.refresh(employee)
 
     token = create_access_token(
@@ -179,6 +178,14 @@ def create_employee(data: UserCreate, admin: User, db: Session) -> User:
     except Exception as exc:
         _log_email_failure("invitation", employee.id, exc)
     return employee
+
+def _assert_employee_identity_available(db: Session, email: str, username: str) -> None:
+    # Emails are unique across companies: login finds the user by email alone.
+    # Checking only this company let the insert hit the unique index, a 500.
+    if db.query(User).filter(User.email == email).first():
+        raise AppError(status_code=400, message="Email already registered")
+    if db.query(User).filter(User.username == username).first():
+        raise AppError(status_code=400, message="Username already registered")
 
 def list_employees(current_user: User, db: Session, company_id=None) -> list[User]:
     query = db.query(User)
