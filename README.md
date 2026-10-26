@@ -282,6 +282,22 @@ Códigos por fila: `required`, `duplicate_sku` (repetido en el archivo),
 `decimal_too_large`, `too_many_decimals`, `invalid_uuid`, `supplier_not_found`,
 `supplier_inactive` y `csv_injection` (celdas que empiezan con `=`, `+`, `-` o `@`).
 
+### Movimientos manuales: `POST /api/v1/inventory/movements`
+
+Requiere rol manager o superior. Cada movimiento actualiza el stock y las alertas
+en la misma transacción, y el stock nunca queda negativo (400).
+
+| Suman | Restan |
+|---|---|
+| `entrada_compra`, `entrada_manual`, `ajuste_positivo`, `devolucion_cliente` | `salida_manual`, `ajuste_negativo`, `devolucion_proveedor` |
+
+- `salida_venta` solo la registran las ventas, y `referencia_tipo` y
+  `referencia_id` solo los fijan las ventas y sus anulaciones. Enviarlos en un
+  movimiento manual responde 400, para que un movimiento manual no pueda pasar por
+  una venta.
+- Los ajustes (`ajuste_positivo`, `ajuste_negativo`) exigen `motivo`; sin él la
+  respuesta es 422. En los demás tipos el motivo es opcional.
+
 ### Reportes — `/api/v1/reports`
 
 Todos los endpoints de reportes requieren rol admin o superior.

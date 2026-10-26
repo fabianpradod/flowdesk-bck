@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.schemas.base import StrippedModel
 
@@ -133,6 +133,9 @@ class ProductStatusUpdate(BaseModel):
     is_active: bool
 
 
+ADJUSTMENT_TYPES = {MovementType.AJUSTE_POSITIVO, MovementType.AJUSTE_NEGATIVO}
+
+
 class InventoryMovementCreate(StrippedModel):
     producto_id: UUID
     tipo_movimiento: MovementType
@@ -140,6 +143,14 @@ class InventoryMovementCreate(StrippedModel):
     motivo: str | None = Field(default=None, max_length=200)
     referencia_tipo: str | None = Field(default=None, max_length=30)
     referencia_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_reason_for_adjustments(self):
+        # An adjustment corrects stock with no document behind it, so the reason
+        # is the only record of why the count changed.
+        if self.tipo_movimiento in ADJUSTMENT_TYPES and not self.motivo:
+            raise ValueError("motivo is required for adjustments")
+        return self
 
 
 class InventoryMovementResponse(BaseModel):

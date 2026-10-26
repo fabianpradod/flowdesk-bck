@@ -183,7 +183,7 @@ def movements(
             description =
                 "Registra un movimiento manual de inventario y actualiza el stock. Dispara lógica de alertas automáticamente. " \
                 "Requiere rol manager o superior. No acepta salida_venta ni referencia_tipo/referencia_id: las ventas y sus " \
-                "anulaciones registran sus propios movimientos."
+                "anulaciones registran sus propios movimientos. Los ajustes exigen motivo."
 )
 def create_movement(
     data: InventoryMovementCreate,

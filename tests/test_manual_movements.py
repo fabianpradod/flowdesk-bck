@@ -3,6 +3,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.schemas.inventory import InventoryMovementCreate
@@ -85,3 +86,28 @@ def test_manual_movements_cannot_point_at_a_sale_or_void(tenant, extra):
     assert exc.value.status_code == 400
     assert exc.value.message == "References are set by sales and voids"
     assert movements_of(engine, tables, product_id) == []
+
+
+@pytest.mark.parametrize("tipo", ["ajuste_positivo", "ajuste_negativo"])
+@pytest.mark.parametrize("motivo", [None, "", "   "])
+def test_adjustments_need_a_reason(tipo, motivo):
+    with pytest.raises(ValidationError) as exc:
+        InventoryMovementCreate(producto_id=uuid4(), tipo_movimiento=tipo, cantidad=Decimal("1"), motivo=motivo)
+
+    assert "motivo is required for adjustments" in str(exc.value)
+
+
+def test_other_manual_movements_keep_the_reason_optional():
+    movement = InventoryMovementCreate(producto_id=uuid4(), tipo_movimiento="entrada_manual", cantidad=Decimal("1"))
+
+    assert movement.motivo is None
+
+
+def test_adjustment_without_reason_answers_422_over_http(admin_client):
+    response = admin_client.post(
+        "/api/v1/inventory/movements",
+        json={"producto_id": str(uuid4()), "tipo_movimiento": "ajuste_negativo", "cantidad": "1"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "validation_error"
