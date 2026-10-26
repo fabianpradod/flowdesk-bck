@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.schemas.base import StrippedModel
+
 
 class ClientBase(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
@@ -91,6 +93,10 @@ class SaleCreate(BaseModel):
         return self
 
 
+class SaleVoid(StrippedModel):
+    motivo: str = Field(min_length=1, max_length=200)
+
+
 class SaleItemResponse(BaseModel):
     id: UUID
     producto_id: UUID
@@ -113,6 +119,9 @@ class SaleResponse(BaseModel):
     es_exenta: bool
     total: Decimal
     estado: str
+    motivo_anulacion: str | None = None
+    anulada_por: UUID | None = None
+    anulada_en: datetime | None = None
     items: list[SaleItemResponse]
 
 class TaxConfigurationUpdate(BaseModel):

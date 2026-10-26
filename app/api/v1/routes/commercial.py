@@ -13,6 +13,7 @@ from app.schemas.commercial import (
     ClientUpdate,
     SaleCreate,
     SaleResponse,
+    SaleVoid,
     TaxConfigurationResponse,
     TaxConfigurationUpdate,
 )
@@ -132,6 +133,17 @@ def create_sale(
 ):
     """Registra una venta para un cliente activo o, sin cliente_id, para consumidor final. Descuenta stock, así que requiere rol manager o superior."""
     return commercial_service.create_sale(data, current_user, db)
+
+
+@router.post("/sales/{sale_id}/void", response_model=SaleResponse, summary="Anular venta")
+def void_sale(
+    sale_id: UUID,
+    data: SaleVoid,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("manager")),
+):
+    """Anula una venta completada con un motivo obligatorio y devuelve su stock. La venta y sus movimientos se conservan. Requiere rol manager o superior."""
+    return commercial_service.void_sale(sale_id, data, current_user, db)
 
 
 @router.get("/sales/{sale_id}", response_model=SaleResponse, summary="Obtener venta")

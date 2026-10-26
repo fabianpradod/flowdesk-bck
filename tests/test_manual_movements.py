@@ -3,12 +3,12 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import select
 
 from app.schemas.inventory import InventoryMovementCreate
 from app.services import inventory as inventory_service
 from app.utils.exceptions import AppError
-from tests.tenant_sqlite import NOW, new_session, tenant_engine, tenant_user
+from tests.tenant_sqlite import insert_product, new_session, tenant_engine, tenant_user
 
 MANUAL_TYPES = [
     ("entrada_compra", Decimal("13")),
@@ -25,18 +25,6 @@ MANUAL_TYPES = [
 def tenant():
     engine, tables = tenant_engine()
     return engine, tables, tenant_user()
-
-
-def insert_product(engine, tables, *, stock="10", minimum="2", active=True):
-    product_id = uuid4()
-    with new_session(engine) as db:
-        db.execute(insert(tables["producto"]).values(
-            id=product_id, sku=f"sku-{product_id.hex[:8]}", nombre="Producto", precio_venta=Decimal("5"),
-            stock_actual=Decimal(stock), stock_minimo=Decimal(minimum), is_active=active,
-            created_at=NOW, updated_at=NOW,
-        ))
-        db.commit()
-    return product_id
 
 
 def record(engine, user, product_id, tipo, cantidad="3", **extra):

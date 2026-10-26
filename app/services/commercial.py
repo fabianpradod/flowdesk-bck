@@ -5,13 +5,16 @@ from sqlalchemy import func, insert, or_, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate, TaxConfigurationUpdate
+from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate, SaleVoid, TaxConfigurationUpdate
 from app.services.inventory import _sync_stock_alerts
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError
+from app.utils.logger import logger
 from app.taxation.legacy import resolve_legacy_sales_rate
 
 MONEY_QUANTUM = Decimal("0.01")
+COMPLETED_SALE_STATE = "completada"
+VOIDED_SALE_STATE = "anulada"
 MAX_TAX_RATE = Decimal("100")
 DEFAULT_TAX_RATE = Decimal("0.00")
 
@@ -244,8 +247,10 @@ def create_sale(data: SaleCreate, current_user, db: Session) -> dict:
         client_name = client["nombre"]
 
     product_ids = [item.producto_id for item in data.items]
+    # Locked in id order, like voids, so a sale and a void that share products
+    # never wait on each other in opposite order.
     product_rows = db.execute(
-        select(products).where(products.c.id.in_(product_ids)).with_for_update()
+        select(products).where(products.c.id.in_(product_ids)).order_by(products.c.id).with_for_update()
     ).mappings()
     products_by_id = {row["id"]: dict(row) for row in product_rows}
     missing = next((product_id for product_id in product_ids if product_id not in products_by_id), None)
@@ -294,7 +299,7 @@ def create_sale(data: SaleCreate, current_user, db: Session) -> dict:
                 tasa_impuesto=tax_rate,
                 es_exenta=data.es_exenta,
                 total=total,
-                estado="completada",
+                estado=COMPLETED_SALE_STATE,
                 created_at=now,
                 updated_at=now,
             )
@@ -348,6 +353,108 @@ def create_sale(data: SaleCreate, current_user, db: Session) -> dict:
         raise AppError(status_code=500, message="Sale registration failed") from exc
 
     return get_sale(sale_id, current_user, db, client_name=client_name)
+
+
+def void_sale(sale_id: UUID, data: SaleVoid, current_user, db: Session) -> dict:
+    """Void a completed sale and put its stock back, as one transaction.
+
+    The sale, its items and its salida_venta movements stay as they were. The void
+    records the reason, who and when, and adds one devolucion_cliente movement per
+    line that points back at the sale.
+    """
+    tables = _tenant_tables(current_user)
+    sales = tables["venta"]
+    sale_items = tables["detalle_venta"]
+    products = tables["producto"]
+    movements = tables["movimiento_inventario"]
+    alerts = tables["alerta"]
+
+    sale = _fetch_sale_state(db, sales, sale_id)
+    if sale is None:
+        raise AppError(status_code=404, message="Sale not found")
+    if sale["estado"] == VOIDED_SALE_STATE:
+        raise AppError(status_code=400, message="Sale is already voided")
+    if sale["estado"] != COMPLETED_SALE_STATE:
+        raise AppError(status_code=400, message="Only completed sales can be voided")
+
+    now = _utcnow()
+    try:
+        # The state check is part of the update: of two voids running at once only
+        # one changes the row, the other waits for its lock and matches nothing.
+        claimed = db.execute(
+            update(sales)
+            .where(sales.c.id == sale_id, sales.c.estado == COMPLETED_SALE_STATE)
+            .values(
+                estado=VOIDED_SALE_STATE,
+                motivo_anulacion=data.motivo,
+                anulada_por=current_user.id,
+                anulada_en=now,
+                updated_at=now,
+            )
+        ).rowcount
+        if claimed != 1:
+            raise AppError(status_code=400, message="Sale is already voided")
+
+        items = db.execute(
+            select(sale_items).where(sale_items.c.venta_id == sale_id).order_by(sale_items.c.id)
+        ).mappings().all()
+        product_rows = db.execute(
+            select(products)
+            .where(products.c.id.in_([item["producto_id"] for item in items]))
+            .order_by(products.c.id)
+            .with_for_update()
+        ).mappings()
+        products_by_id = {row["id"]: dict(row) for row in product_rows}
+        for item in items:
+            # Inactive products get their stock back too: the void corrects history.
+            product = products_by_id[item["producto_id"]]
+            quantity = _decimal(item["cantidad"])
+            stock_before = _decimal(product["stock_actual"])
+            stock_after = stock_before + quantity
+            product["stock_actual"] = stock_after
+            db.execute(
+                update(products)
+                .where(products.c.id == item["producto_id"])
+                .values(stock_actual=stock_after, updated_at=now)
+            )
+            db.execute(
+                insert(movements).values(
+                    id=uuid4(),
+                    producto_id=item["producto_id"],
+                    usuario_id=current_user.id,
+                    tipo_movimiento="devolucion_cliente",
+                    fecha=now,
+                    cantidad=quantity,
+                    stock_anterior=stock_before,
+                    stock_resultante=stock_after,
+                    motivo=data.motivo,
+                    referencia_tipo="anulacion_venta",
+                    referencia_id=sale_id,
+                )
+            )
+            _sync_stock_alerts(
+                db=db,
+                alerts=alerts,
+                product_id=item["producto_id"],
+                product_name=product["nombre"],
+                stock_resultante=stock_after,
+                stock_minimo=_decimal(product["stock_minimo"]),
+                now=now,
+            )
+        db.commit()
+    except AppError:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Sale void failed for sale %s", sale_id)
+        raise AppError(status_code=500, message="Sale void failed") from exc
+
+    return get_sale(sale_id, current_user, db)
+
+
+def _fetch_sale_state(db: Session, sales, sale_id: UUID):
+    return db.execute(select(sales.c.id, sales.c.estado).where(sales.c.id == sale_id)).mappings().first()
 
 
 def get_sale(sale_id: UUID, current_user, db: Session, *, client_name: str | None = None) -> dict:

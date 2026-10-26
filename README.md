@@ -155,6 +155,7 @@ válida, es decir también `employee`.
 | `POST /api/v1/ai/analysis` | `manager` o `admin` estricto |
 | `POST /api/v1/ai/chat`, `GET /api/v1/ai/conversations`, `GET/DELETE /api/v1/ai/conversations/{id}` | `manager` o `admin` estricto; conversaciones propias |
 | `POST /api/v1/commercial/clients`, `/sales` | `manager` |
+| `POST /api/v1/commercial/sales/{id}/void` | `manager` |
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
 | `DELETE /api/v1/commercial/clients/{id}` | `admin` |
@@ -210,8 +211,8 @@ historial:
 
 - Un proveedor no se desactiva mientras tenga productos activos asociados.
 - Un cliente no se desactiva mientras tenga ventas en estado `borrador`. Las
-  ventas `completada` y `cancelada` no lo impiden — conservarlas es justamente
-  el motivo del soft delete.
+  ventas `completada` y `anulada` no lo impiden: conservarlas es justamente el
+  motivo del soft delete.
 
 **Nombres y correos.** Solo los registros activos reservan su nombre y su
 correo, en clientes y en proveedores por igual. Desactivar libera ambos, de modo
@@ -348,6 +349,27 @@ Al registrar una venta mediante `POST /api/v1/commercial/sales`:
 4. **Total final**: `total = subtotal - descuento + impuesto`.
 5. **Redondeo monetario**: Se utiliza redondeo aritmético simétrico (`ROUND_HALF_UP`) con precisión a centavos (`0.01`).
 6. **Almacenamiento del desglose**: La venta almacena `subtotal`, `descuento`, `impuesto`, `tasa_impuesto`, `es_exenta` y `total` para auditoría e histórico inmutable.
+
+#### Anulación de ventas
+
+`POST /api/v1/commercial/sales/{sale_id}/void` con `{"motivo": "..."}` anula una
+venta completada. Requiere rol manager o superior.
+
+- `motivo` es obligatorio, de 1 a 200 caracteres sin contar los espacios al inicio
+  y al final.
+- La venta no se borra: pasa a `estado = anulada` y guarda `motivo_anulacion`,
+  `anulada_por` (el usuario) y `anulada_en`. Sus líneas, importes y movimientos
+  `salida_venta` quedan como estaban.
+- En la misma transacción, el stock de cada línea vuelve al producto con un
+  movimiento `devolucion_cliente` cuyo `referencia_tipo` es `anulacion_venta`,
+  cuyo `referencia_id` es la venta y cuyo `motivo` es el de la anulación. Las
+  alertas de stock se recalculan.
+- También se anulan ventas con productos que se desactivaron después: la anulación
+  corrige el historial y devuelve su stock.
+- Una venta ya anulada responde 400, también cuando dos anulaciones llegan a la vez:
+  solo una se aplica. Una venta inexistente o de otra empresa responde 404.
+- Las métricas, los reportes y el chat cuentan solo ventas completadas, así que una
+  venta anulada deja de sumar en ellos.
 
 ### Tareas
 

@@ -89,6 +89,9 @@ def _migrate_existing_tenant_schema(connection, schema_name: str) -> None:
         "venta": {
             "tasa_impuesto": "NUMERIC(5, 2) NOT NULL DEFAULT 0",
             "es_exenta": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "motivo_anulacion": "VARCHAR(200) NULL",
+            "anulada_por": 'UUID NULL REFERENCES "global".users (id)',
+            "anulada_en": "TIMESTAMP NULL",
         },
         "configuracion_tributaria": {
             "perfil_tributario": "JSON NULL",

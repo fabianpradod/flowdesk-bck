@@ -1,14 +1,15 @@
 """Real tenant tables on SQLite, for tests that depend on the declared constraints.
 
 The tables come from the same registry production uses, so unique indexes and check
-constraints refuse what Postgres would refuse. Partial index conditions are
-Postgres only: here those indexes apply to every row.
+constraints refuse what Postgres would refuse. A partial index declared only with
+postgresql_where applies to every row here.
 """
 from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, insert
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -44,3 +45,15 @@ def tenant_user(schema_name: str = SCHEMA, role: str = "manager"):
 
 def new_session(engine) -> Session:
     return Session(engine, expire_on_commit=False)
+
+
+def insert_product(engine, tables, *, stock="10", minimum="2", price="5", active=True):
+    product_id = uuid4()
+    with new_session(engine) as db:
+        db.execute(insert(tables["producto"]).values(
+            id=product_id, sku=f"sku-{product_id.hex[:8]}", nombre="Producto", precio_venta=Decimal(price),
+            stock_actual=Decimal(stock), stock_minimo=Decimal(minimum), is_active=active,
+            created_at=NOW, updated_at=NOW,
+        ))
+        db.commit()
+    return product_id
