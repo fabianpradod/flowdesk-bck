@@ -244,6 +244,21 @@ La especificación completa está en `/docs`. Estos son los grupos principales:
 - `/api/v1/tasks`: tareas personales del usuario autenticado.
 - `/api/v1/reports`: reportes de inventario, movimientos y alertas.
 
+### Empleados: `PUT /api/v1/users/{id}`
+
+Actualiza `username`, `role_id` e `is_active` en una sola transacción. Valida todo
+antes de escribir: si un campo se rechaza, no se aplica ninguno. Así el frontend
+puede guardar rol y estado en una sola llamada en lugar de un PUT seguido de un
+PATCH, que dejaba el rol cambiado si el segundo fallaba.
+`PATCH /api/v1/users/{id}/status` sigue disponible.
+
+- Un admin no puede cambiar su propio rol ni su propio estado (400).
+- `username` se guarda sin espacios al inicio ni al final y debe tener de 1 a 50
+  caracteres (422). Es único entre todas las empresas: un nombre tomado responde
+  400, también cuando dos solicitudes lo piden a la vez.
+- Al crear empleados (`POST /api/v1/auth/employees`) rige lo mismo para `username`
+  y para el correo.
+
 ### Importación de productos: `POST /api/v1/inventory/products/import`
 
 Requiere rol manager o superior. Recibe un archivo en el campo `file` de un
