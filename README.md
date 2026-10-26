@@ -257,6 +257,7 @@ formulario multipart.
 | Encabezados | Sin distinción de mayúsculas; cualquier otra columna se rechaza |
 | Stock inicial | 0; las existencias se cargan después con movimientos |
 | Valores por defecto | `precio_venta` y `stock_minimo` en 0, `unidad_medida` en `unidad` |
+| SKU | Se guarda en minúsculas, igual que al crear un producto; los repetidos se detectan sin distinguir mayúsculas |
 
 La importación es todo o nada: si una fila tiene errores no se crea ningún
 producto. La respuesta exitosa es `{"inserted": n, "products": [...]}`. Un rechazo

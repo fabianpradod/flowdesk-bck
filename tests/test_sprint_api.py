@@ -159,7 +159,7 @@ def test_parse_product_import_accepts_xlsx():
     rows = parse_product_import_file("products.xlsx", content)
 
     assert len(rows) == 1
-    assert rows[0]["sku"] == "SKU-2"
+    assert rows[0]["sku"] == "sku-2"
     assert rows[0]["precio_venta"] == Decimal("12.75")
 
 def test_inventory_metrics_summary_counts_movements_and_stock_risk():

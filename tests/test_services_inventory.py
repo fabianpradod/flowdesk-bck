@@ -1185,7 +1185,7 @@ def test_parse_csv_valid():
     )
 
     assert len(result) == 1
-    assert result[0]["sku"] == "SKU-1"
+    assert result[0]["sku"] == "sku-1"
     assert result[0]["precio_venta"] == Decimal("10.50")
 
 def test_parse_csv_utf8_bom():
@@ -1199,7 +1199,7 @@ def test_parse_csv_utf8_bom():
         content,
     )
 
-    assert result[0]["sku"] == "SKU-1"
+    assert result[0]["sku"] == "sku-1"
 
 def test_parse_empty_file():
     with pytest.raises(ProductImportError) as exc:
@@ -2817,7 +2817,7 @@ def test_parse_xlsx_valid():
     )
 
     assert len(result) == 1
-    assert result[0]["sku"] == "SKU-XLSX"
+    assert result[0]["sku"] == "sku-xlsx"
     assert result[0]["nombre"] == "Producto XLSX"
 
 def test_read_xlsx_invalid_zip():

@@ -208,6 +208,9 @@ class FakeResult:
     def mappings(self):
         return self
 
+    def scalars(self):
+        return self
+
     def first(self):
         return self.rows[0] if self.rows else None
 

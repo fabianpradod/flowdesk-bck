@@ -313,34 +313,54 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
         if not supplier["is_active"]:
             raise AppError(status_code=400, message="Supplier is inactive")
 
-    existing = db.execute(
-        select(products.c.id).where(products.c.sku == sku)
-    ).first()
-    if existing:
-        raise AppError(status_code=400, message="SKU already exists")
+    _assert_sku_available(db, products, sku)
 
     now = _utcnow()
     product_id = uuid4()
-    db.execute(
-        insert(products).values(
-            id=product_id,
-            proveedor_id=data.proveedor_id,
-            sku=sku,
-            nombre=data.nombre.strip(),
-            descripcion=data.descripcion,
-            precio_venta=data.precio_venta,
-            stock_actual=Decimal("0"),
-            stock_minimo=data.stock_minimo,
-            unidad_medida=data.unidad_medida.strip(),
-            is_active=True,
-            updated_at=now,
+    try:
+        db.execute(
+            insert(products).values(
+                id=product_id,
+                proveedor_id=data.proveedor_id,
+                sku=sku,
+                nombre=data.nombre.strip(),
+                descripcion=data.descripcion,
+                precio_venta=data.precio_venta,
+                stock_actual=Decimal("0"),
+                stock_minimo=data.stock_minimo,
+                unidad_medida=data.unidad_medida.strip(),
+                is_active=True,
+                updated_at=now,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except IntegrityError:
+        # Another request created the same SKU after the check.
+        db.rollback()
+        raise AppError(status_code=400, message="SKU already exists")
     row = db.execute(
         select(products).where(products.c.id == product_id)
     ).mappings().one()
     return dict(row)
+
+def _assert_sku_available(db: Session, products, sku: str) -> None:
+    # SKUs are stored lowercase, but imports kept the typed case until they were
+    # normalized too, so older rows may still be uppercase.
+    if db.execute(select(products.c.id).where(func.lower(products.c.sku) == sku)).first():
+        raise AppError(status_code=400, message="SKU already exists")
+
+
+def _existing_sku_errors(db: Session, products, rows: list[dict]) -> list[dict]:
+    skus = [row["sku"] for row in rows]
+    if not skus:
+        return []
+    existing = set(db.execute(select(func.lower(products.c.sku)).where(func.lower(products.c.sku).in_(skus))).scalars())
+    return [
+        {"row": index, "column": "sku", "code": "existing_sku", "message": "SKU already exists"}
+        for index, row in enumerate(rows, start=2)
+        if row["sku"] in existing
+    ]
+
 
 def _supplier_products_tables(current_user: User):
     tables = _get_tenant_tables_for_user(current_user)
@@ -612,18 +632,8 @@ def import_products_from_file(filename: str, content: bytes, current_user: User,
     products = tables["producto"]
     suppliers = tables["proveedor"]
 
-    import_errors = []
-    skus = [row["sku"] for row in rows]
-    existing_skus = set()
-    if skus:
-        existing_skus = {
-            row["sku"]
-            for row in db.execute(select(products.c.sku).where(products.c.sku.in_(skus))).mappings()
-        }
+    import_errors = _existing_sku_errors(db, products, rows)
     for index, row in enumerate(rows, start=2):
-        if row["sku"] in existing_skus:
-            import_errors.append({"row": index, "column": "sku", "code": "existing_sku", "message": "SKU already exists"})
-
         proveedor_id = row.get("proveedor_id")
         if proveedor_id:
             supplier = db.execute(
@@ -662,6 +672,10 @@ def import_products_from_file(filename: str, content: bytes, current_user: User,
         if insert_rows:
             db.execute(insert(products), insert_rows)
         db.commit()
+    except IntegrityError:
+        # Another request created one of these SKUs after the check above.
+        db.rollback()
+        raise ProductImportError("Invalid product import rows", "invalid_rows", _existing_sku_errors(db, products, rows))
     except Exception:
         db.rollback()
         raise
@@ -816,7 +830,7 @@ def _normalize_product_import_rows(raw_rows: list[dict]) -> list[dict]:
         if not any(_clean_text(value) for value in row.values()):
             continue
 
-        sku = _clean_text(row.get("sku"))
+        sku = _clean_text(row.get("sku")).lower()
         nombre = _clean_text(row.get("nombre"))
         if not sku:
             errors.append({"row": index, "column": "sku", "code": "required", "message": "SKU is required"})
