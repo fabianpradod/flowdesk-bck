@@ -1532,7 +1532,7 @@ def test_create_inventory_movement_outbound(inventory_db):
     result = inventory_service.create_inventory_movement(
         InventoryMovementCreate(
             producto_id=product_id,
-            tipo_movimiento="salida_venta",
+            tipo_movimiento="salida_manual",
             cantidad=Decimal("3"),
         ),
         user,
@@ -1796,7 +1796,7 @@ def test_stock_alert_zero_stock(inventory_db):
     inventory_service.create_inventory_movement(
         InventoryMovementCreate(
             producto_id=product_id,
-            tipo_movimiento="salida_venta",
+            tipo_movimiento="salida_manual",
             cantidad=Decimal("1"),
         ),
         user,
@@ -1824,7 +1824,7 @@ def test_stock_alert_low_stock(inventory_db):
     inventory_service.create_inventory_movement(
         InventoryMovementCreate(
             producto_id=product_id,
-            tipo_movimiento="salida_venta",
+            tipo_movimiento="salida_manual",
             cantidad=Decimal("6"),
         ),
         user,
@@ -1852,7 +1852,7 @@ def test_stock_alert_resolved_after_restock(inventory_db):
     inventory_service.create_inventory_movement(
         InventoryMovementCreate(
             producto_id=product_id,
-            tipo_movimiento="salida_venta",
+            tipo_movimiento="salida_manual",
             cantidad=Decimal("1"),
         ),
         user,

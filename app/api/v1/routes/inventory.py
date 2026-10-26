@@ -181,7 +181,9 @@ def movements(
 
 @router.post("/movements", response_model=InventoryMovementResponse, summary="Crear movimiento", 
             description =
-                "Registra un movimiento de inventario y actualiza el stock. Dispara lógica de alertas automáticamente. Requiere rol manager o superior."
+                "Registra un movimiento manual de inventario y actualiza el stock. Dispara lógica de alertas automáticamente. " \
+                "Requiere rol manager o superior. No acepta salida_venta ni referencia_tipo/referencia_id: las ventas y sus " \
+                "anulaciones registran sus propios movimientos."
 )
 def create_movement(
     data: InventoryMovementCreate,

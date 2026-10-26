@@ -922,6 +922,13 @@ def list_inventory_movements(current_user: User, db: Session, product_id=None) -
 
 
 def create_inventory_movement(data: InventoryMovementCreate, current_user: User, db: Session) -> dict:
+    # Sales write their own salida_venta movements and voids their reversals, both
+    # pointing at the sale. A manual movement that did either could pass for one.
+    if data.tipo_movimiento == "salida_venta":
+        raise AppError(status_code=400, message="Sale movements are recorded by sales")
+    if data.referencia_tipo is not None or data.referencia_id is not None:
+        raise AppError(status_code=400, message="References are set by sales and voids")
+
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]
     movements = tables["movimiento_inventario"]

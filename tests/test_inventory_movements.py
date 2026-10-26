@@ -145,7 +145,7 @@ def test_inventory_movement_success():
 
     data = SimpleNamespace(
         producto_id=product_id,
-        tipo_movimiento="salida_venta",
+        tipo_movimiento="salida_manual",
         cantidad=Decimal("3"),
         motivo="venta",
         referencia_tipo=None,
@@ -167,7 +167,7 @@ def test_inventory_product_not_found():
 
     data = SimpleNamespace(
         producto_id=uuid4(),
-        tipo_movimiento="salida_venta",
+        tipo_movimiento="salida_manual",
         cantidad=Decimal("1"),
         motivo=None,
         referencia_tipo=None,
@@ -187,7 +187,7 @@ def test_inactive_product_cannot_move():
 
     data = SimpleNamespace(
         producto_id=product_id,
-        tipo_movimiento="salida_venta",
+        tipo_movimiento="salida_manual",
         cantidad=Decimal("1"),
         motivo=None,
         referencia_tipo=None,
@@ -207,7 +207,7 @@ def test_invalid_inventory_quantity_negative():
 
     data = SimpleNamespace(
         producto_id=product_id,
-        tipo_movimiento="salida_venta",
+        tipo_movimiento="salida_manual",
         cantidad=Decimal("-5"),
         motivo=None,
         referencia_tipo=None,
@@ -227,7 +227,7 @@ def test_excessive_quantity_is_rejected():
 
     data = SimpleNamespace(
         producto_id=product_id,
-        tipo_movimiento="salida_venta",
+        tipo_movimiento="salida_manual",
         cantidad=Decimal("999999999999999"),
         motivo=None,
         referencia_tipo=None,
