@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.tenant.base import Base, TENANT_SCHEMA
@@ -8,7 +8,18 @@ from app.models.tenant.base import Base, TENANT_SCHEMA
 
 class Proveedor(Base):
     __tablename__ = "proveedor"
-    __table_args__ = {"schema": TENANT_SCHEMA}
+    # Only active suppliers reserve a name, as with clients. Without the index two
+    # requests that passed the service check at the same time both inserted.
+    __table_args__ = (
+        Index(
+            "uq_proveedor_nombre_ci",
+            text("lower(nombre)"),
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active"),
+        ),
+        {"schema": TENANT_SCHEMA},
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nombre = Column(String(100), nullable=False)

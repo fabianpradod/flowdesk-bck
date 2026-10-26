@@ -9,6 +9,7 @@ from uuid import uuid4
 from xml.etree import ElementTree
 
 from sqlalchemy import func, insert, select, update, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.users import User
@@ -150,17 +151,21 @@ def create_supplier(data: SupplierCreate, current_user: User, db: Session) -> di
 
     now = _utcnow()
     supplier_id = uuid4()
-    db.execute(
-        insert(suppliers).values(
-            id=supplier_id,
-            nombre=nombre,
-            telefono=data.telefono,
-            correo=data.correo,
-            direccion=data.direccion,
-            updated_at=now,
+    try:
+        db.execute(
+            insert(suppliers).values(
+                id=supplier_id,
+                nombre=nombre,
+                telefono=data.telefono,
+                correo=data.correo,
+                direccion=data.direccion,
+                updated_at=now,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise _supplier_name_taken()
     row = db.execute(
         select(suppliers).where(suppliers.c.id == supplier_id)
     ).mappings().one()
@@ -184,6 +189,9 @@ def update_supplier(data: SupplierUpdate, current_user: User, db: Session, suppl
     try:
         db.execute(update(suppliers).where(suppliers.c.id == supplier_id).values(**changes))
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise _supplier_name_taken()
     except Exception:
         db.rollback()
         logger.exception("Failed to update supplier %s", supplier_id)
@@ -242,7 +250,13 @@ def _assert_supplier_name_available(db: Session, suppliers, nombre: str, exclude
     if exclude_id is not None:
         query = query.where(suppliers.c.id != exclude_id)
     if db.execute(query).first():
-        raise AppError(status_code=400, message="Supplier name already exists")
+        raise _supplier_name_taken()
+
+
+def _supplier_name_taken() -> AppError:
+    # Also raised when the unique index refuses a name another request took
+    # between the check above and the commit.
+    return AppError(status_code=400, message="Supplier name already exists")
 
 
 def _assert_supplier_has_no_active_products(db: Session, products, supplier_id) -> None:
@@ -264,6 +278,10 @@ def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool) -
             .values(is_active=is_active, updated_at=_utcnow())
         )
         db.commit()
+    except IntegrityError:
+        # Only reactivation can collide: the name was taken while inactive.
+        db.rollback()
+        raise _supplier_name_taken()
     except Exception:
         db.rollback()
         logger.exception("Failed to update supplier status %s", supplier_id)

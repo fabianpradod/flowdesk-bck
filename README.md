@@ -218,8 +218,13 @@ correo, en clientes y en proveedores por igual. Desactivar libera ambos, de modo
 que el nombre puede reutilizarse. Como contrapartida, reactivar falla con 400 si
 alguien tomó ese nombre mientras tanto; hay que renombrar antes de reactivar.
 
-Los índices únicos de `cliente` son parciales sobre `is_active`, así que la
-regla se sostiene también a nivel de base y no solo en el service.
+Los índices únicos de `cliente` (nombre y correo) y de `proveedor` (nombre) son
+parciales sobre `is_active` y no distinguen mayúsculas, así que la regla se
+sostiene también a nivel de base y no solo en el service: si dos solicitudes
+pasan la validación a la vez, la segunda responde 400. Al arrancar, la API crea
+o actualiza estos índices en las empresas existentes; si una empresa ya tiene
+duplicados activos, la omite y deja un warning en el log, y el índice se crea en
+el siguiente arranque después de resolverlos.
 
 **Filtro de estado.** `?is_active=true` y `?is_active=false` filtran por estado
 exacto; omitirlo muestra solo los activos. En clientes se conserva `active_only`
