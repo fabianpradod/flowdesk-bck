@@ -148,8 +148,11 @@ def update_product_status(
 
 @router.post("/products/import", response_model=ProductImportResponse, summary="Importar productos", 
             description =
-                "Importa productos desde un archivo .xlsx. Máximo 5MB. Columnas requeridas: SKU, Nombre, Stock Actual, " \
-                "Stock Mínimo, Precio Estandar, Proveedor, Descripción, Estado."
+                "Importa productos desde un archivo .csv (UTF-8) o .xlsx (primera hoja). Máximo 5 MB y 5000 filas. " \
+                "Columnas obligatorias: sku, nombre. Opcionales: descripcion, precio_venta, stock_minimo, " \
+                "unidad_medida, proveedor_id. Los encabezados no distinguen mayúsculas y no se aceptan otras columnas. " \
+                "Los productos se crean con stock 0; las existencias se cargan con movimientos. Si una fila tiene " \
+                "errores no se importa ninguna y la respuesta 400 lista cada error con fila, columna y código."
 )
 def import_products(
     file: UploadFile = File(...),

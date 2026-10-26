@@ -238,6 +238,43 @@ La especificación completa está en `/docs`. Estos son los grupos principales:
 - `/api/v1/tasks`: tareas personales del usuario autenticado.
 - `/api/v1/reports`: reportes de inventario, movimientos y alertas.
 
+### Importación de productos: `POST /api/v1/inventory/products/import`
+
+Requiere rol manager o superior. Recibe un archivo en el campo `file` de un
+formulario multipart.
+
+| Regla | Valor |
+|---|---|
+| Formatos | `.csv` en UTF-8 o `.xlsx` (se lee la primera hoja) |
+| Tamaño máximo | 5 MB y 5000 filas |
+| Columnas obligatorias | `sku`, `nombre` |
+| Columnas opcionales | `descripcion`, `precio_venta`, `stock_minimo`, `unidad_medida`, `proveedor_id` |
+| Encabezados | Sin distinción de mayúsculas; cualquier otra columna se rechaza |
+| Stock inicial | 0; las existencias se cargan después con movimientos |
+| Valores por defecto | `precio_venta` y `stock_minimo` en 0, `unidad_medida` en `unidad` |
+
+La importación es todo o nada: si una fila tiene errores no se crea ningún
+producto. La respuesta exitosa es `{"inserted": n, "products": [...]}`. Un rechazo
+responde 400 con el contrato de error habitual; `code` indica el motivo general y
+`errors` trae un elemento por problema, con `row`, `column`, `code` y `message`.
+`row` empieza en 2 para la primera fila de datos; las filas vacías se omiten y no
+cuentan.
+
+| `code` general | Motivo |
+|---|---|
+| `empty_file` | Archivo vacío o sin filas de datos |
+| `file_too_large` | Más de 5 MB |
+| `import_too_large` | Más de 5000 filas |
+| `unsupported_format` | Extensión distinta de `.csv` o `.xlsx` |
+| `invalid_format` | CSV que no es UTF-8 o XLSX dañado |
+| `invalid_columns` | Falta una columna obligatoria (`missing_column`) o sobra una (`unexpected_column`) |
+| `invalid_rows` | Errores por fila, detallados en `errors` |
+
+Códigos por fila: `required`, `duplicate_sku` (repetido en el archivo),
+`existing_sku` (ya existe en la empresa), `invalid_decimal`, `negative_decimal`,
+`decimal_too_large`, `too_many_decimals`, `invalid_uuid`, `supplier_not_found`,
+`supplier_inactive` y `csv_injection` (celdas que empiezan con `=`, `+`, `-` o `@`).
+
 ### Reportes — `/api/v1/reports`
 
 Todos los endpoints de reportes requieren rol admin o superior.
