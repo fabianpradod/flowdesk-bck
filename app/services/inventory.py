@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 from sqlalchemy import insert, select, update, delete
 from sqlalchemy.orm import Session
 
+from app.services.audit import record_event
 from app.models.users import User
 from app.schemas.inventory import (
     AnalyticsPeriod,
@@ -208,7 +209,7 @@ def update_supplier_status(current_user: User, db: Session, supplier_id, is_acti
     else:
         _assert_supplier_has_no_active_products(db, tables["producto"], supplier_id)
 
-    _set_supplier_active(db, suppliers, supplier_id, is_active)
+    _set_supplier_active(db, suppliers, supplier_id, is_active, current_user)
     return _fetch_supplier(db, suppliers, supplier_id)
 
 
@@ -221,7 +222,7 @@ def delete_supplier(current_user: User, db: Session, supplier_id) -> None:
         return
 
     _assert_supplier_has_no_active_products(db, tables["producto"], supplier_id)
-    _set_supplier_active(db, suppliers, supplier_id, False)
+    _set_supplier_active(db, suppliers, supplier_id, False, current_user)
 
 
 def _fetch_supplier(db: Session, suppliers, supplier_id) -> dict:
@@ -255,13 +256,14 @@ def _assert_supplier_has_no_active_products(db: Session, products, supplier_id) 
         raise AppError(status_code=400, message="Supplier still has active products")
 
 
-def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool) -> None:
+def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool, current_user) -> None:
     try:
         db.execute(
             update(suppliers)
             .where(suppliers.c.id == supplier_id)
             .values(is_active=is_active, updated_at=_utcnow())
         )
+        record_event(db, current_user, "supplier.status_changed", "supplier", supplier_id)
         db.commit()
     except Exception:
         db.rollback()
@@ -888,6 +890,24 @@ def list_inventory_movements(current_user: User, db: Session, product_id=None) -
     return [dict(row) for row in rows]
 
 
+
+def list_inventory_movements_page(current_user, db, *, product_id=None, limit=100, cursor=None):
+    from sqlalchemy import tuple_
+    from app.services.pagination import decode_cursor, encode_cursor
+    table = _get_tenant_tables_for_user(current_user)['movimiento_inventario']
+    context = ['movements', str(current_user.company_id), str(product_id) if product_id else None]
+    query = select(table)
+    if product_id:
+        query = query.where(table.c.producto_id == product_id)
+    if cursor:
+        timestamp, movement_id = decode_cursor(cursor, context)
+        query = query.where(tuple_(table.c.fecha, table.c.id) < tuple_(timestamp, movement_id))
+    rows = [dict(row) for row in db.execute(query.order_by(
+        table.c.fecha.desc(), table.c.id.desc()).limit(limit + 1)).mappings()]
+    items = rows[:limit]
+    return {'items': items, 'next_cursor':
+            encode_cursor(items[-1], 'fecha', context) if len(rows) > limit else None}
+
 def create_inventory_movement(data: InventoryMovementCreate, current_user: User, db: Session) -> dict:
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]
@@ -953,6 +973,7 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
             stock_minimo=_to_decimal(product["stock_minimo"]),
             now=now,
         )
+        record_event(db, current_user, "movement.created", "movement", movement_id)
         db.commit()
     except Exception:
         db.rollback()
@@ -1474,6 +1495,7 @@ def update_product_status(current_user: User, db: Session, product_id, is_active
             .where(products.c.id == product_id)
             .values(is_active=is_active, updated_at=now)
         )
+        record_event(db, current_user, "product.status_changed", "product", product_id)
         db.commit()
     except Exception:
         db.rollback()

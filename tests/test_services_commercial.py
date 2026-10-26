@@ -1,5 +1,6 @@
-from uuid import uuid4
+from app.models.tenant.audit import AuditEvent
 from types import SimpleNamespace
+from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -110,6 +111,8 @@ def commercial_db(monkeypatch):
         ),
     )
 
+    audit_table = AuditEvent.__table__.to_metadata(metadata, schema=None)
+    monkeypatch.setattr('app.services.audit.get_tenant_tables', lambda _schema: {'audit_event': audit_table})
     metadata.create_all(engine)
 
     SessionLocal = sessionmaker(
@@ -119,7 +122,7 @@ def commercial_db(monkeypatch):
     )
 
     db = SessionLocal()
-    current_user = object()
+    current_user = SimpleNamespace(id=uuid4(), company_id=uuid4(), company=SimpleNamespace(is_active=True, schema_name="tenant_" + "a" * 32))
 
     monkeypatch.setattr(
         commercial_service,

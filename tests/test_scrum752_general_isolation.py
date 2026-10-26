@@ -1,3 +1,4 @@
+from app.models.tenant.audit import AuditEvent
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -36,6 +37,8 @@ def test_real_client_records_are_isolated_between_tenants_and_cross_update_is_no
     with engine.begin() as connection:
         connection.exec_driver_sql('ATTACH DATABASE ":memory:" AS tenant_a')
         connection.exec_driver_sql('ATTACH DATABASE ":memory:" AS tenant_b')
+    for schema in ('tenant_a', 'tenant_b'):
+        AuditEvent.__table__.to_metadata(metadata, schema=schema)
     metadata.create_all(engine)
 
     users = {
@@ -132,6 +135,8 @@ def test_inventory_resources_are_isolated_between_tenants_for_reads_and_writes(m
     with engine.begin() as connection:
         connection.exec_driver_sql('ATTACH DATABASE ":memory:" AS tenant_a')
         connection.exec_driver_sql('ATTACH DATABASE ":memory:" AS tenant_b')
+    for schema in ('tenant_a', 'tenant_b'):
+        AuditEvent.__table__.to_metadata(metadata, schema=schema)
     metadata.create_all(engine)
 
     users = {

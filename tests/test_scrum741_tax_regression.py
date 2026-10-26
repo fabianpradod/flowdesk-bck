@@ -1,3 +1,4 @@
+from app.models.tenant.audit import AuditEvent
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -96,6 +97,8 @@ def test_sales_persist_tax_values_and_use_the_current_tenant_configuration(monke
     with engine.begin() as connection:
         connection.exec_driver_sql('ATTACH DATABASE ":memory:" AS tenant_a')
         connection.exec_driver_sql('ATTACH DATABASE ":memory:" AS tenant_b')
+    for schema in ('tenant_a', 'tenant_b'):
+        AuditEvent.__table__.to_metadata(metadata, schema=schema)
     metadata.create_all(engine)
 
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)

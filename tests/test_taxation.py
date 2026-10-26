@@ -151,13 +151,13 @@ def test_tax_configuration_update_persists_a_tenant_specific_rate(monkeypatch):
 
     result = commercial_service.update_tax_configuration(
         TaxConfigurationUpdate(tasa_impuesto=Decimal("13.00")),
-        SimpleNamespace(),
+        SimpleNamespace(id=uuid4(), company_id=uuid4(), company=SimpleNamespace(is_active=True, schema_name=SCHEMA_NAME)),
         db,
     )
 
     assert result == {"tasa_impuesto": Decimal("13.00")}
     assert db.commits == 1
-    params = db.statements[-1].compile().params
+    params = next(statement.compile().params for statement in db.statements if "tasa_impuesto" in statement.compile().params)
     assert params["tasa_impuesto"] == Decimal("13.00")
 
 @pytest.mark.parametrize(
@@ -294,7 +294,7 @@ def test_tax_configuration_update_serializes_tenant_configuration(monkeypatch):
 
     commercial_service.update_tax_configuration(
         TaxConfigurationUpdate(tasa_impuesto=Decimal("12.00")),
-        SimpleNamespace(),
+        SimpleNamespace(id=uuid4(), company_id=uuid4(), company=SimpleNamespace(is_active=True, schema_name=SCHEMA_NAME)),
         db,
     )
 
