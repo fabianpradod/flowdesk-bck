@@ -420,3 +420,47 @@ def test_superadmin_can_delete_other_user(seed_test_db):
     )
 
     assert target.is_active is False
+
+def test_update_own_role_forbidden(seed_test_db):
+    db = seed_test_db
+
+    admin = _user(db, "admin.demo@flowdesk.com")
+    admin_role_id = admin.role_id
+
+    with pytest.raises(AppError) as exc:
+        users_service.update_user(
+            db,
+            admin.id,
+            UserUpdate(role_id=_role(db, "employee").id),
+            admin,
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.message == "Cannot change your own role"
+    assert admin.role_id == admin_role_id
+    assert db.commits == 0
+
+def test_update_own_username_allowed(seed_test_db):
+    db = seed_test_db
+
+    admin = _user(db, "admin.demo@flowdesk.com")
+
+    result = users_service.update_user(
+        db,
+        admin.id,
+        UserUpdate(username="admin_renamed", role_id=admin.role_id),
+        admin,
+    )
+
+    assert result.username == "admin_renamed"
+
+def test_put_user_endpoint_refuses_own_role_change(seed_test_db, admin_client):
+    admin = _user(seed_test_db, "admin.demo@flowdesk.com")
+
+    response = admin_client.put(
+        f"/api/v1/users/{admin.id}",
+        json={"role_id": _role(seed_test_db, "employee").id},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Cannot change your own role"

@@ -29,7 +29,9 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
         if db.query(User).filter(User.username == data.username).first():
             raise AppError(400, "Username already registered")
         user.username = data.username
-    if data.role_id is not None:
+    if data.role_id is not None and data.role_id != user.role_id:
+        if user.id == current_user.id:
+            raise AppError(400, "Cannot change your own role")
         role = db.query(Role).filter(Role.id == data.role_id).first()
         if not role:
             raise AppError(404, "Role not found")
