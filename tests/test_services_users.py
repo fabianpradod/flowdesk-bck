@@ -454,6 +454,77 @@ def test_update_own_username_allowed(seed_test_db):
 
     assert result.username == "admin_renamed"
 
+def test_update_user_role_and_status_in_one_commit(seed_test_db):
+    db = seed_test_db
+
+    admin = _user(db, "admin.demo@flowdesk.com")
+    target = _user(db, "demo_employee")
+    manager_role = _role(db, "manager")
+
+    result = users_service.update_user(
+        db,
+        target.id,
+        UserUpdate(username="employee_moved", role_id=manager_role.id, is_active=False),
+        admin,
+    )
+
+    assert result.username == "employee_moved"
+    assert result.role_id == manager_role.id
+    assert result.is_active is False
+    assert db.commits == 1
+
+def test_update_own_status_through_put_forbidden(seed_test_db):
+    db = seed_test_db
+
+    admin = _user(db, "admin.demo@flowdesk.com")
+
+    with pytest.raises(AppError) as exc:
+        users_service.update_user(
+            db,
+            admin.id,
+            UserUpdate(username="admin_renamed", is_active=False),
+            admin,
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.message == "Cannot change your own status"
+    assert admin.username == "demo_admin"
+    assert admin.is_active is True
+    assert db.commits == 0
+
+def test_update_user_refused_role_leaves_other_fields_unchanged(seed_test_db):
+    db = seed_test_db
+
+    admin = _user(db, "admin.demo@flowdesk.com")
+    target = _user(db, "demo_employee")
+
+    with pytest.raises(AppError) as exc:
+        users_service.update_user(
+            db,
+            target.id,
+            UserUpdate(username="must_not_apply", role_id=999999, is_active=False),
+            admin,
+        )
+
+    assert exc.value.status_code == 404
+    assert target.username == "demo_employee"
+    assert target.is_active is True
+    assert db.commits == 0
+
+def test_put_user_endpoint_applies_status_with_role(seed_test_db, admin_client):
+    target = _user(seed_test_db, "demo_employee")
+    manager_role = _role(seed_test_db, "manager")
+
+    response = admin_client.put(
+        f"/api/v1/users/{target.id}",
+        json={"role_id": manager_role.id, "is_active": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role_id"] == manager_role.id
+    assert response.json()["is_active"] is False
+    assert seed_test_db.commits == 1
+
 def test_put_user_endpoint_refuses_own_role_change(seed_test_db, admin_client):
     admin = _user(seed_test_db, "admin.demo@flowdesk.com")
 

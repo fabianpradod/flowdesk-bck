@@ -23,12 +23,12 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
         raise AppError(404, "User not found")
 
+    # Every rule is checked before the first field changes, so a refused request
+    # never leaves part of its fields applied.
+    changes = {}
     if data.username is not None and data.username != user.username:
-        # Usernames are unique across companies; without this check the unique
-        # index caught the duplicate and the request answered 500.
-        if db.query(User).filter(User.username == data.username).first():
-            raise AppError(400, "Username already registered")
-        user.username = data.username
+        _assert_username_available(db, data.username)
+        changes["username"] = data.username
     if data.role_id is not None and data.role_id != user.role_id:
         if user.id == current_user.id:
             raise AppError(400, "Cannot change your own role")
@@ -37,8 +37,14 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
             raise AppError(404, "Role not found")
         if role.name == "superadmin":
             raise AppError(403, "Cannot assign superadmin role")
-        user.role_id = data.role_id
+        changes["role_id"] = data.role_id
+    if data.is_active is not None and data.is_active != user.is_active:
+        if user.id == current_user.id:
+            raise AppError(400, "Cannot change your own status")
+        changes["is_active"] = data.is_active
 
+    for field, value in changes.items():
+        setattr(user, field, value)
     db.commit()
     db.refresh(user)
     return user
@@ -74,3 +80,10 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
 
     user.is_active = False
     db.commit()
+
+
+def _assert_username_available(db: Session, username: str) -> None:
+    # Usernames are unique across companies; without this check the unique
+    # index caught the duplicate and the request answered 500.
+    if db.query(User).filter(User.username == username).first():
+        raise AppError(400, "Username already registered")

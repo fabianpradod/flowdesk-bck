@@ -96,6 +96,7 @@ class EmailRequest(BaseModel):
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     role_id: Optional[int] = None
+    is_active: Optional[bool] = None
 
 class UserStatusUpdate(BaseModel):
     is_active: bool

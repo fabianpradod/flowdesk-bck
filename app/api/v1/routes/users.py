@@ -26,7 +26,7 @@ def users(db: Session = Depends(get_db), current_user=Depends(require_role("admi
 
 
 @router.put("/{user_id}", response_model = UserResponse, summary = "Actualizar usuario",
-    description = """Actualiza el username y/o rol de un usuario. El admin solo puede modificar usuarios de su propia empresa.""",
+    description = """Actualiza el username, el rol y/o el estado de un usuario en una sola transacción: si un campo es rechazado, no se aplica ninguno. El admin solo puede modificar usuarios de su propia empresa y no puede cambiar su propio rol ni su propio estado.""",
     responses = {
         200: {"description": "Usuario actualizado"},
         400: {"description": "Datos inválidos"},
@@ -35,7 +35,7 @@ def users(db: Session = Depends(get_db), current_user=Depends(require_role("admi
     },
 )
 def update_user(user_id: UUID, data: UserUpdate, db: Session = Depends(get_db), current_user=Depends(require_role("admin"))):
-    """Actualiza el username y/o rol de un usuario. El admin solo puede modificar usuarios de su propia empresa."""
+    """Actualiza username, rol y estado juntos. Valida todo antes de escribir, así que un rechazo no deja cambios a medias."""
     return users_service.update_user(db, user_id, data, current_user)
 
 
