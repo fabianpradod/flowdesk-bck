@@ -89,3 +89,39 @@ def test_legacy_uppercase_skus_still_block_new_products(tenant):
         _import(engine, user, "leg-1")
     assert exc.value.errors[0]["code"] == "existing_sku"
     assert _skus(engine, tables) == ["LEG-1"]
+
+
+def test_concurrent_create_with_the_same_sku_answers_400(tenant, monkeypatch):
+    engine, tables, user = tenant
+    _create(engine, user, "abc-1")
+    # The other request passed the same check at the same moment.
+    monkeypatch.setattr(inventory_service, "_assert_sku_available", lambda *_args: None)
+
+    with pytest.raises(AppError) as exc:
+        _create(engine, user, "ABC-1")
+
+    assert exc.value.status_code == 400
+    assert exc.value.message == "SKU already exists"
+    assert _skus(engine, tables) == ["abc-1"]
+
+
+def test_concurrent_import_with_the_same_sku_reports_the_rows(tenant, monkeypatch):
+    engine, tables, user = tenant
+    _create(engine, user, "abc-1")
+    real_check = inventory_service._existing_sku_errors
+    calls = []
+
+    def check_once_free(db, products, rows):
+        # First call is the pre-check the concurrent request also passed; the
+        # second runs after the unique index refused the insert.
+        calls.append(rows)
+        return [] if len(calls) == 1 else real_check(db, products, rows)
+
+    monkeypatch.setattr(inventory_service, "_existing_sku_errors", check_once_free)
+
+    with pytest.raises(ProductImportError) as exc:
+        _import(engine, user, "new-1", "ABC-1")
+
+    assert exc.value.code == "invalid_rows"
+    assert exc.value.errors == [{"row": 3, "column": "sku", "code": "existing_sku", "message": "SKU already exists"}]
+    assert _skus(engine, tables) == ["abc-1"]
