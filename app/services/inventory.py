@@ -8,7 +8,7 @@ from uuid import UUID
 from uuid import uuid4
 from xml.etree import ElementTree
 
-from sqlalchemy import insert, select, update, delete
+from sqlalchemy import func, insert, select, update, delete
 from sqlalchemy.orm import Session
 
 from app.models.users import User
@@ -233,8 +233,10 @@ def _fetch_supplier(db: Session, suppliers, supplier_id) -> dict:
 
 
 def _assert_supplier_name_available(db: Session, suppliers, nombre: str, exclude_id=None) -> None:
+    # Exact match ignoring case. ilike treated % and _ in a name as wildcards,
+    # so "A_C" was refused because "ABC" existed.
     query = select(suppliers.c.id).where(
-        suppliers.c.nombre.ilike(nombre),
+        func.lower(suppliers.c.nombre) == func.lower(nombre),
         suppliers.c.is_active.is_(True),
     )
     if exclude_id is not None:
