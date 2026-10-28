@@ -14,6 +14,7 @@ from app.schemas.inventory import (
     InventoryMetricsResponse,
     InventoryMonthlyAnalyticsResponse,
     InventoryMovementCreate,
+    InventoryMovementPage,
     InventoryMovementResponse,
     MovementType,
     InventoryTrendAnalyticsResponse,
@@ -177,6 +178,19 @@ def movements(
     current_user: User = Depends(require_role()),
 ):
     return inventory_service.list_inventory_movements(current_user, db, product_id)
+
+
+@router.get('/movements/page', response_model=InventoryMovementPage, summary='Paginar movimientos por cursor')
+def movements_page(
+    product_id: UUID | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    cursor: str | None = Query(None, max_length=1024),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role()),
+):
+    return inventory_service.list_inventory_movements_page(
+        current_user, db, product_id=product_id, limit=limit, cursor=cursor,
+    )
 
 
 @router.post("/movements", response_model=InventoryMovementResponse, summary="Crear movimiento", 

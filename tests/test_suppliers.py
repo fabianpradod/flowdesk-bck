@@ -32,6 +32,8 @@ class FakeDB:
 
     def execute(self, statement):
         self.statements.append(statement)
+        if getattr(getattr(statement, 'table', None), 'name', None) == 'audit_event':
+            return FakeResult([])
 
         rows = self.results.pop(0) if self.results else []
 
@@ -50,6 +52,7 @@ def make_user():
     )
 
     return SimpleNamespace(
+        id=uuid4(),
         company_id=uuid4(),
         company=company,
     )

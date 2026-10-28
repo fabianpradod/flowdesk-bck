@@ -4,6 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import DB_MAX_OVERFLOW, DB_POOL_SIZE
+from app.api.v1.routes.audit import router as audit_router
 from app.core.https import SecureFastAPI, configure_transport_security
 from app.core.pool_admission import PoolAdmissionMiddleware
 from app.db.init_db import init_db
@@ -76,6 +77,7 @@ async def unhandled_exception_handler(_request: Request, _exc: Exception):
         content={"message": "Internal server error", "code": "internal_error", "errors": []},
     )
 
+app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(roles_router)

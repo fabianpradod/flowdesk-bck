@@ -1,0 +1,133 @@
+[
+  {
+    "check": "audit requires authentication",
+    "passed": true
+  },
+  {
+    "check": "employee cannot read audit",
+    "passed": true
+  },
+  {
+    "check": "manager cannot read audit",
+    "passed": true
+  },
+  {
+    "check": "movement commits with audit",
+    "passed": true
+  },
+  {
+    "check": "admin sees persisted movement event",
+    "passed": true
+  },
+  {
+    "check": "other company audit unchanged",
+    "passed": true
+  },
+  {
+    "check": "employee can read bounded movement page",
+    "passed": true
+  },
+  {
+    "check": "next page has no duplicates",
+    "passed": true
+  },
+  {
+    "check": "cross-tenant cursor rejected",
+    "passed": true
+  },
+  {
+    "check": "real user update commits",
+    "passed": true
+  },
+  {
+    "check": "user update has audit event",
+    "passed": true
+  },
+  {
+    "check": "migration rerun preserves existing movements",
+    "passed": true
+  },
+  {
+    "check": "migration creates audit and cursor indexes",
+    "passed": true
+  },
+  {
+    "check": "movement first-page execution plan",
+    "plan": [
+      {
+        "Plan": {
+          "Node Type": "Limit",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 0.29,
+          "Total Cost": 11.4,
+          "Plan Rows": 101,
+          "Plan Width": 195,
+          "Actual Startup Time": 0.013,
+          "Actual Total Time": 0.038,
+          "Actual Rows": 101,
+          "Actual Loops": 1,
+          "Shared Hit Blocks": 88,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Index Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Scan Direction": "Backward",
+              "Index Name": "ix_movimiento_fecha_id",
+              "Relation Name": "movimiento_inventario",
+              "Alias": "movimiento_inventario",
+              "Startup Cost": 0.29,
+              "Total Cost": 2640.12,
+              "Plan Rows": 23989,
+              "Plan Width": 195,
+              "Actual Startup Time": 0.012,
+              "Actual Total Time": 0.034,
+              "Actual Rows": 101,
+              "Actual Loops": 1,
+              "Shared Hit Blocks": 88,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        },
+        "Planning": {
+          "Shared Hit Blocks": 29,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.095,
+        "Triggers": [],
+        "Execution Time": 0.048
+      }
+    ]
+  },
+  {
+    "check": "persisted actor matches authenticated manager",
+    "passed": true
+  }
+]

@@ -5,6 +5,7 @@ from sqlalchemy import func, insert, or_, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.services.audit import record_event
 from app.schemas.commercial import ClientCreate, ClientUpdate, SaleCreate, SaleVoid, TaxConfigurationUpdate
 from app.services.inventory import _sync_stock_alerts
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
@@ -181,6 +182,7 @@ def update_client_status(client_id: UUID, is_active: bool, current_user, db: Ses
             .returning(clients)
         ).mappings().one()
 
+        record_event(db, current_user, "client.status_changed", "client", client_id)
         db.commit()
 
     except SQLAlchemyError as exc:
@@ -210,6 +212,7 @@ def delete_client(client_id: UUID, current_user, db: Session) -> None:
             .where(clients.c.id == client_id)
             .values(is_active=False, updated_at=_utcnow())
         )
+        record_event(db, current_user, "client.deactivated", "client", client_id)
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
@@ -344,6 +347,7 @@ def create_sale(data: SaleCreate, current_user, db: Session) -> dict:
                 stock_minimo=_decimal(product["stock_minimo"]),
                 now=now,
             )
+        record_event(db, current_user, "sale.created", "sale", sale_id)
         db.commit()
     except AppError:
         db.rollback()
@@ -508,10 +512,11 @@ def update_tax_configuration(data: TaxConfigurationUpdate, current_user, db: Ses
             select(configuration.c.id).order_by(configuration.c.updated_at.desc()).limit(1)
         ).first()
 
+        config_id = current[0] if current is not None else uuid4()
         if current is None:
             db.execute(
                 insert(configuration).values(
-                    id=uuid4(),
+                    id=config_id,
                     tasa_impuesto=rate,
                     created_at=now,
                     updated_at=now,
@@ -523,6 +528,7 @@ def update_tax_configuration(data: TaxConfigurationUpdate, current_user, db: Ses
                 .where(configuration.c.id == current[0])
                 .values(tasa_impuesto=rate, updated_at=now)
             )
+        record_event(db, current_user, "tax_configuration.updated", "tax_configuration", config_id)
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()

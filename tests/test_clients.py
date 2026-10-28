@@ -50,6 +50,7 @@ def make_user():
     )
 
     return SimpleNamespace(
+        id=uuid4(),
         company_id=uuid4(),
         company=company,
     )

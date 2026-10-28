@@ -76,6 +76,7 @@ def test_build_tenant_metadata_contains_expected_tables():
     table_names = get_tenant_table_names()
 
     expected_table_names = {
+        "audit_event",
         "proveedor",
         "producto",
         "proveedor_producto",
@@ -280,6 +281,29 @@ def test_get_user_schema_name():
     schema = get_user_schema_name(user)
 
     assert schema == "tenant_demo"
+
+
+def test_bootstrap_preserves_unique_and_pagination_index_migrations():
+    schema = "tenant_1234567890abcdef1234567890abcdef"
+    connection = MagicMock()
+    names = ["proveedor", "movimiento_inventario", "audit_event"]
+    tables = [SimpleNamespace(name=name, indexes=[MagicMock()]) for name in names]
+    metadata = MagicMock()
+    metadata.tables = {f"{schema}.{table.name}": table for table in tables}
+
+    with (
+        patch("app.tenancy.bootstrap.build_tenant_metadata", return_value=metadata),
+        patch("app.tenancy.bootstrap.get_tenant_table_names", return_value=names),
+        patch("app.tenancy.bootstrap._migrate_existing_tenant_schema") as migrate,
+        patch("app.tenancy.bootstrap._ensure_partial_unique_indexes") as unique_indexes,
+    ):
+        bootstrap_tenant_schema(connection, schema)
+
+    migrate.assert_called_once_with(connection, schema)
+    unique_indexes.assert_called_once_with(connection, schema, tables)
+    tables[0].indexes[0].create.assert_not_called()
+    for table in tables[1:]:
+        table.indexes[0].create.assert_called_once_with(bind=connection, checkfirst=True)
 
 def test_get_user_schema_without_company():
     user = SimpleNamespace(

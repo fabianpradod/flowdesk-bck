@@ -30,6 +30,13 @@ def bootstrap_tenant_schema(connection, schema_name: str) -> None:
     metadata.create_all(bind=connection, tables=tenant_tables)
     _migrate_existing_tenant_schema(connection, schema_name)
     _ensure_partial_unique_indexes(connection, schema_name, tenant_tables)
+    # create_all skips indexes on already-existing tables; migrate those explicitly.
+    if hasattr(connection, 'dialect'):
+        for table in tenant_tables:
+            if table.name not in {'movimiento_inventario', 'audit_event'}:
+                continue
+            for index in table.indexes:
+                index.create(bind=connection, checkfirst=True)
 
 
 def _ensure_partial_unique_indexes(connection, schema_name: str, tables) -> None:

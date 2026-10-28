@@ -57,6 +57,8 @@ class MovimientoInventario(Base):
     __tablename__ = "movimiento_inventario"
     __table_args__ = (
         CheckConstraint("cantidad > 0", name="ck_movimiento_inventario_cantidad_positive"),
+        Index('ix_movimiento_fecha_id', 'fecha', 'id'),
+        Index('ix_movimiento_producto_fecha_id', 'producto_id', 'fecha', 'id'),
         {"schema": TENANT_SCHEMA},
     )
 

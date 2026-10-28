@@ -1,6 +1,7 @@
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid import UUID
+from app.services.audit import record_event
 from app.models.users import User
 from app.models.roles import Role
 from app.schemas.users import UserUpdate, UserStatusUpdate
@@ -47,7 +48,7 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
 
     for field, value in changes.items():
         setattr(user, field, value)
-    _commit_user_changes(db, user_id)
+    _commit_user_change(db, current_user, user, "user.role_changed" if data.role_id is not None else "user.updated")
     db.refresh(user)
     return user
 
@@ -64,7 +65,7 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
         raise AppError(404, "User not found")
 
     user.is_active = data.is_active
-    db.commit()
+    _commit_user_change(db, current_user, user, "user.status_changed")
     db.refresh(user)
     return user
 
@@ -81,7 +82,7 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
         raise AppError(404, "User not found")
 
     user.is_active = False
-    db.commit()
+    _commit_user_change(db, current_user, user, "user.deactivated")
 
 
 def _assert_username_available(db: Session, username: str) -> None:
@@ -91,8 +92,10 @@ def _assert_username_available(db: Session, username: str) -> None:
         raise AppError(400, "Username already registered")
 
 
-def _commit_user_changes(db: Session, user_id: UUID) -> None:
+def _commit_user_change(db, actor, user, action):
+    user_id = user.id
     try:
+        record_event(db, actor, action, 'user', user_id, schema_name=user.company.schema_name)
         db.commit()
     except IntegrityError:
         # Another request took the username between the check and the commit.
@@ -102,3 +105,6 @@ def _commit_user_changes(db: Session, user_id: UUID) -> None:
         db.rollback()
         logger.exception("Failed to update user %s", user_id)
         raise AppError(500, "Failed to update user")
+    except Exception as exc:
+        db.rollback()
+        raise AppError(500, 'User update failed') from exc

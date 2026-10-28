@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -19,9 +19,11 @@ from app.models.users import User
 from app.schemas.users import UserCreate, UserUpdate
 from app.services import auth as auth_service
 from app.services import users as users_service
+from app.tenancy.runtime import get_tenant_tables
 from app.utils.exceptions import AppError
 
 CREATED = datetime(2026, 1, 1)
+SCHEMA = "tenant_" + "a" * 32
 
 
 @pytest.fixture
@@ -31,10 +33,12 @@ def engine():
     @event.listens_for(engine, "connect")
     def attach_global(connection, _record):
         connection.execute("ATTACH DATABASE ':memory:' AS global")
+        connection.execute(f"ATTACH DATABASE ':memory:' AS {SCHEMA}")
         # users.created_at defaults to Postgres now().
         connection.create_function("now", 0, lambda: CREATED.isoformat(" "))
 
     Base.metadata.create_all(engine, tables=[Role.__table__, Company.__table__, User.__table__])
+    get_tenant_tables(SCHEMA)["audit_event"].create(engine)
     with Session(engine) as db:
         roles = {name: Role(name=name, description="", created_at=CREATED) for name in ("employee", "manager", "admin")}
         company = Company(name="Acme", schema_name="tenant_" + "a" * 32, is_active=True, created_at=CREATED)
@@ -69,6 +73,11 @@ def _admin(db):
     return db.query(User).filter(User.username == "admin").one()
 
 
+def _audit_rows(engine):
+    with Session(engine) as db:
+        return db.execute(select(get_tenant_tables(SCHEMA)["audit_event"])).mappings().all()
+
+
 def test_update_applies_username_role_and_status_together(engine):
     employee = _load(engine, "employee")
     with Session(engine) as db:
@@ -82,6 +91,11 @@ def test_update_applies_username_role_and_status_together(engine):
     stored = _load(engine, "promoted")
     assert stored["role"] == "manager"
     assert stored["is_active"] is False
+    events = _audit_rows(engine)
+    assert len(events) == 1
+    assert events[0]["action"] == "user.role_changed"
+    assert events[0]["entity_id"] == employee["id"]
+    assert events[0]["actor_id"] == _load(engine, "admin")["id"]
 
 
 def test_refused_update_leaves_every_field_unchanged(engine):
@@ -117,6 +131,7 @@ def test_username_taken_after_the_check_answers_400_and_changes_nothing(engine, 
     assert exc.value.status_code == 400
     assert exc.value.message == "Username already registered"
     assert _load(engine, "employee") == employee
+    assert _audit_rows(engine) == []
 
 
 def test_database_failure_on_update_answers_generic_error_and_changes_nothing(engine, monkeypatch):
@@ -137,6 +152,29 @@ def test_database_failure_on_update_answers_generic_error_and_changes_nothing(en
     assert exc.value.status_code == 500
     assert exc.value.message == "Failed to update user"
     assert _load(engine, "employee") == employee
+    assert _audit_rows(engine) == []
+
+
+def test_audit_failure_rolls_back_all_employee_changes(engine, monkeypatch):
+    employee = _load(engine, "employee")
+
+    def fail_audit(*_args, **_kwargs):
+        raise RuntimeError("audit storage unavailable")
+
+    monkeypatch.setattr(users_service, "record_event", fail_audit)
+    with Session(engine) as db:
+        with pytest.raises(AppError) as exc:
+            users_service.update_user(
+                db,
+                employee["id"],
+                UserUpdate(username="must_not_apply", role_id=_role_id(engine, "manager"), is_active=False),
+                _admin(db),
+            )
+        assert exc.value.status_code == 500
+        db.commit()
+
+    assert _load(engine, "employee") == employee
+    assert _audit_rows(engine) == []
 
 
 @pytest.mark.parametrize(

@@ -87,6 +87,9 @@ class FakeDB:
         self.refreshed = []
         self.connection_obj = object()
 
+    def execute(self, statement, *_args, **_kwargs):
+        self.executed = getattr(self, "executed", []) + [statement]
+
     def query(self, model):
         return FakeQuery(self, model)
 
