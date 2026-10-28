@@ -32,7 +32,7 @@ def test_parse_csv_utf8_bom_and_normalizes_rows():
     rows = inventory.parse_product_import_file("products.csv", content)
 
     assert rows == [{
-        "sku": "SKU-1",
+        "sku": "sku-1",
         "nombre": "Producto",
         "descripcion": "Desc",
         "precio_venta": Decimal("12.50"),
@@ -79,7 +79,7 @@ def test_normalize_import_skips_blank_rows():
         {"sku": " ", "nombre": " "},
     ])
     assert len(rows) == 1
-    assert rows[0]["sku"] == "A"
+    assert rows[0]["sku"] == "a"
 
 def test_normalize_import_rejects_duplicate_sku():
     with pytest.raises(ProductImportError) as exc:

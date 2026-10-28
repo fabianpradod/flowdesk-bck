@@ -8,12 +8,14 @@ from uuid import UUID
 from uuid import uuid4
 from xml.etree import ElementTree
 
-from sqlalchemy import insert, select, update, delete
+from sqlalchemy import func, insert, select, update, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.services.audit import record_event
 from app.models.users import User
 from app.schemas.inventory import (
+    ADJUSTMENT_TYPES,
     AnalyticsPeriod,
     AnalyticsWindow,
     InventoryMovementCreate,
@@ -28,7 +30,6 @@ from app.schemas.inventory import (
 from app.tenancy.runtime import get_tenant_tables, get_user_schema_name
 from app.utils.exceptions import AppError, ProductImportError
 from fastapi import UploadFile
-from app.utils.excel import load_excel_rows
 from app.utils.logger import logger
 from app.core.config import MAX_IMPORT_FILE_SIZE
 
@@ -152,17 +153,21 @@ def create_supplier(data: SupplierCreate, current_user: User, db: Session) -> di
 
     now = _utcnow()
     supplier_id = uuid4()
-    db.execute(
-        insert(suppliers).values(
-            id=supplier_id,
-            nombre=nombre,
-            telefono=data.telefono,
-            correo=data.correo,
-            direccion=data.direccion,
-            updated_at=now,
+    try:
+        db.execute(
+            insert(suppliers).values(
+                id=supplier_id,
+                nombre=nombre,
+                telefono=data.telefono,
+                correo=data.correo,
+                direccion=data.direccion,
+                updated_at=now,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise _supplier_name_taken()
     row = db.execute(
         select(suppliers).where(suppliers.c.id == supplier_id)
     ).mappings().one()
@@ -186,6 +191,9 @@ def update_supplier(data: SupplierUpdate, current_user: User, db: Session, suppl
     try:
         db.execute(update(suppliers).where(suppliers.c.id == supplier_id).values(**changes))
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise _supplier_name_taken()
     except Exception:
         db.rollback()
         logger.exception("Failed to update supplier %s", supplier_id)
@@ -235,14 +243,22 @@ def _fetch_supplier(db: Session, suppliers, supplier_id) -> dict:
 
 
 def _assert_supplier_name_available(db: Session, suppliers, nombre: str, exclude_id=None) -> None:
+    # Exact match ignoring case. ilike treated % and _ in a name as wildcards,
+    # so "A_C" was refused because "ABC" existed.
     query = select(suppliers.c.id).where(
-        suppliers.c.nombre.ilike(nombre),
+        func.lower(suppliers.c.nombre) == func.lower(nombre),
         suppliers.c.is_active.is_(True),
     )
     if exclude_id is not None:
         query = query.where(suppliers.c.id != exclude_id)
     if db.execute(query).first():
-        raise AppError(status_code=400, message="Supplier name already exists")
+        raise _supplier_name_taken()
+
+
+def _supplier_name_taken() -> AppError:
+    # Also raised when the unique index refuses a name another request took
+    # between the check above and the commit.
+    return AppError(status_code=400, message="Supplier name already exists")
 
 
 def _assert_supplier_has_no_active_products(db: Session, products, supplier_id) -> None:
@@ -265,6 +281,10 @@ def _set_supplier_active(db: Session, suppliers, supplier_id, is_active: bool, c
         )
         record_event(db, current_user, "supplier.status_changed", "supplier", supplier_id)
         db.commit()
+    except IntegrityError:
+        # Only reactivation can collide: the name was taken while inactive.
+        db.rollback()
+        raise _supplier_name_taken()
     except Exception:
         db.rollback()
         logger.exception("Failed to update supplier status %s", supplier_id)
@@ -296,34 +316,54 @@ def create_product(data: ProductCreate, current_user: User, db: Session) -> dict
         if not supplier["is_active"]:
             raise AppError(status_code=400, message="Supplier is inactive")
 
-    existing = db.execute(
-        select(products.c.id).where(products.c.sku == sku)
-    ).first()
-    if existing:
-        raise AppError(status_code=400, message="SKU already exists")
+    _assert_sku_available(db, products, sku)
 
     now = _utcnow()
     product_id = uuid4()
-    db.execute(
-        insert(products).values(
-            id=product_id,
-            proveedor_id=data.proveedor_id,
-            sku=sku,
-            nombre=data.nombre.strip(),
-            descripcion=data.descripcion,
-            precio_venta=data.precio_venta,
-            stock_actual=Decimal("0"),
-            stock_minimo=data.stock_minimo,
-            unidad_medida=data.unidad_medida.strip(),
-            is_active=True,
-            updated_at=now,
+    try:
+        db.execute(
+            insert(products).values(
+                id=product_id,
+                proveedor_id=data.proveedor_id,
+                sku=sku,
+                nombre=data.nombre.strip(),
+                descripcion=data.descripcion,
+                precio_venta=data.precio_venta,
+                stock_actual=Decimal("0"),
+                stock_minimo=data.stock_minimo,
+                unidad_medida=data.unidad_medida.strip(),
+                is_active=True,
+                updated_at=now,
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except IntegrityError:
+        # Another request created the same SKU after the check.
+        db.rollback()
+        raise AppError(status_code=400, message="SKU already exists")
     row = db.execute(
         select(products).where(products.c.id == product_id)
     ).mappings().one()
     return dict(row)
+
+def _assert_sku_available(db: Session, products, sku: str) -> None:
+    # SKUs are stored lowercase, but imports kept the typed case until they were
+    # normalized too, so older rows may still be uppercase.
+    if db.execute(select(products.c.id).where(func.lower(products.c.sku) == sku)).first():
+        raise AppError(status_code=400, message="SKU already exists")
+
+
+def _existing_sku_errors(db: Session, products, rows: list[dict]) -> list[dict]:
+    skus = [row["sku"] for row in rows]
+    if not skus:
+        return []
+    existing = set(db.execute(select(func.lower(products.c.sku)).where(func.lower(products.c.sku).in_(skus))).scalars())
+    return [
+        {"row": index, "column": "sku", "code": "existing_sku", "message": "SKU already exists"}
+        for index, row in enumerate(rows, start=2)
+        if row["sku"] in existing
+    ]
+
 
 def _supplier_products_tables(current_user: User):
     tables = _get_tenant_tables_for_user(current_user)
@@ -595,18 +635,8 @@ def import_products_from_file(filename: str, content: bytes, current_user: User,
     products = tables["producto"]
     suppliers = tables["proveedor"]
 
-    import_errors = []
-    skus = [row["sku"] for row in rows]
-    existing_skus = set()
-    if skus:
-        existing_skus = {
-            row["sku"]
-            for row in db.execute(select(products.c.sku).where(products.c.sku.in_(skus))).mappings()
-        }
+    import_errors = _existing_sku_errors(db, products, rows)
     for index, row in enumerate(rows, start=2):
-        if row["sku"] in existing_skus:
-            import_errors.append({"row": index, "column": "sku", "code": "existing_sku", "message": "SKU already exists"})
-
         proveedor_id = row.get("proveedor_id")
         if proveedor_id:
             supplier = db.execute(
@@ -645,6 +675,10 @@ def import_products_from_file(filename: str, content: bytes, current_user: User,
         if insert_rows:
             db.execute(insert(products), insert_rows)
         db.commit()
+    except IntegrityError:
+        # Another request created one of these SKUs after the check above.
+        db.rollback()
+        raise ProductImportError("Invalid product import rows", "invalid_rows", _existing_sku_errors(db, products, rows))
     except Exception:
         db.rollback()
         raise
@@ -799,7 +833,7 @@ def _normalize_product_import_rows(raw_rows: list[dict]) -> list[dict]:
         if not any(_clean_text(value) for value in row.values()):
             continue
 
-        sku = _clean_text(row.get("sku"))
+        sku = _clean_text(row.get("sku")).lower()
         nombre = _clean_text(row.get("nombre"))
         if not sku:
             errors.append({"row": index, "column": "sku", "code": "required", "message": "SKU is required"})
@@ -909,6 +943,13 @@ def list_inventory_movements_page(current_user, db, *, product_id=None, limit=10
             encode_cursor(items[-1], 'fecha', context) if len(rows) > limit else None}
 
 def create_inventory_movement(data: InventoryMovementCreate, current_user: User, db: Session) -> dict:
+    # Sales write their own salida_venta movements and voids their reversals, both
+    # pointing at the sale. A manual movement that did either could pass for one.
+    if data.tipo_movimiento == "salida_venta":
+        raise AppError(status_code=400, message="Sale movements are recorded by sales")
+    if data.referencia_tipo is not None or data.referencia_id is not None:
+        raise AppError(status_code=400, message="References are set by sales and voids")
+
     tables = _get_tenant_tables_for_user(current_user)
     products = tables["producto"]
     movements = tables["movimiento_inventario"]
@@ -919,7 +960,8 @@ def create_inventory_movement(data: InventoryMovementCreate, current_user: User,
     ).mappings().first()
     if product is None:
         raise AppError(status_code=404, message="Product not found")
-    if not product["is_active"]:
+    # Adjustments stay open so leftover stock can be corrected after deactivation.
+    if not product["is_active"] and data.tipo_movimiento not in ADJUSTMENT_TYPES:
         raise AppError(status_code=400, message="Product is inactive")
 
     direction = _movement_direction(data.tipo_movimiento)

@@ -155,6 +155,7 @@ válida, es decir también `employee`.
 | `POST /api/v1/ai/analysis` | `manager` o `admin` estricto |
 | `POST /api/v1/ai/chat`, `GET /api/v1/ai/conversations`, `GET/DELETE /api/v1/ai/conversations/{id}` | `manager` o `admin` estricto; conversaciones propias |
 | `POST /api/v1/commercial/clients`, `/sales` | `manager` |
+| `POST /api/v1/commercial/sales/{id}/void` | `manager` |
 | `PUT /api/v1/commercial/clients/{id}` | `manager` |
 | `PATCH /api/v1/commercial/clients/{id}/status` | `admin` |
 | `DELETE /api/v1/commercial/clients/{id}` | `admin` |
@@ -210,16 +211,21 @@ historial:
 
 - Un proveedor no se desactiva mientras tenga productos activos asociados.
 - Un cliente no se desactiva mientras tenga ventas en estado `borrador`. Las
-  ventas `completada` y `cancelada` no lo impiden — conservarlas es justamente
-  el motivo del soft delete.
+  ventas `completada` y `anulada` no lo impiden: conservarlas es justamente el
+  motivo del soft delete.
 
 **Nombres y correos.** Solo los registros activos reservan su nombre y su
 correo, en clientes y en proveedores por igual. Desactivar libera ambos, de modo
 que el nombre puede reutilizarse. Como contrapartida, reactivar falla con 400 si
 alguien tomó ese nombre mientras tanto; hay que renombrar antes de reactivar.
 
-Los índices únicos de `cliente` son parciales sobre `is_active`, así que la
-regla se sostiene también a nivel de base y no solo en el service.
+Los índices únicos de `cliente` (nombre y correo) y de `proveedor` (nombre) son
+parciales sobre `is_active` y no distinguen mayúsculas, así que la regla se
+sostiene también a nivel de base y no solo en el service: si dos solicitudes
+pasan la validación a la vez, la segunda responde 400. Al arrancar, la API crea
+o actualiza estos índices en las empresas existentes; si una empresa ya tiene
+duplicados activos, la omite y deja un warning en el log, y el índice se crea en
+el siguiente arranque después de resolverlos.
 
 **Filtro de estado.** `?is_active=true` y `?is_active=false` filtran por estado
 exacto; omitirlo muestra solo los activos. En clientes se conserva `active_only`
@@ -237,6 +243,78 @@ La especificación completa está en `/docs`. Estos son los grupos principales:
 - `/api/v1/commercial`: clientes.
 - `/api/v1/tasks`: tareas personales del usuario autenticado.
 - `/api/v1/reports`: reportes de inventario, movimientos y alertas.
+
+### Empleados: `PUT /api/v1/users/{id}`
+
+Actualiza `username`, `role_id` e `is_active` en una sola transacción. Valida todo
+antes de escribir: si un campo se rechaza, no se aplica ninguno. Así el frontend
+puede guardar rol y estado en una sola llamada en lugar de un PUT seguido de un
+PATCH, que dejaba el rol cambiado si el segundo fallaba.
+`PATCH /api/v1/users/{id}/status` sigue disponible.
+
+- Un admin no puede cambiar su propio rol ni su propio estado (400).
+- `username` se guarda sin espacios al inicio ni al final y debe tener de 1 a 50
+  caracteres (422). Es único entre todas las empresas: un nombre tomado responde
+  400, también cuando dos solicitudes lo piden a la vez.
+- Al crear empleados (`POST /api/v1/auth/employees`) rige lo mismo para `username`
+  y para el correo.
+
+### Importación de productos: `POST /api/v1/inventory/products/import`
+
+Requiere rol manager o superior. Recibe un archivo en el campo `file` de un
+formulario multipart.
+
+| Regla | Valor |
+|---|---|
+| Formatos | `.csv` en UTF-8 o `.xlsx` (se lee la primera hoja) |
+| Tamaño máximo | 5 MB y 5000 filas |
+| Columnas obligatorias | `sku`, `nombre` |
+| Columnas opcionales | `descripcion`, `precio_venta`, `stock_minimo`, `unidad_medida`, `proveedor_id` |
+| Encabezados | Sin distinción de mayúsculas; cualquier otra columna se rechaza |
+| Stock inicial | 0; las existencias se cargan después con movimientos |
+| Valores por defecto | `precio_venta` y `stock_minimo` en 0, `unidad_medida` en `unidad` |
+| SKU | Se guarda en minúsculas, igual que al crear un producto; los repetidos se detectan sin distinguir mayúsculas |
+
+La importación es todo o nada: si una fila tiene errores no se crea ningún
+producto. La respuesta exitosa es `{"inserted": n, "products": [...]}`. Un rechazo
+responde 400 con el contrato de error habitual; `code` indica el motivo general y
+`errors` trae un elemento por problema, con `row`, `column`, `code` y `message`.
+`row` empieza en 2 para la primera fila de datos; las filas vacías se omiten y no
+cuentan.
+
+| `code` general | Motivo |
+|---|---|
+| `empty_file` | Archivo vacío o sin filas de datos |
+| `file_too_large` | Más de 5 MB |
+| `import_too_large` | Más de 5000 filas |
+| `unsupported_format` | Extensión distinta de `.csv` o `.xlsx` |
+| `invalid_format` | CSV que no es UTF-8 o XLSX dañado |
+| `invalid_columns` | Falta una columna obligatoria (`missing_column`) o sobra una (`unexpected_column`) |
+| `invalid_rows` | Errores por fila, detallados en `errors` |
+
+Códigos por fila: `required`, `duplicate_sku` (repetido en el archivo),
+`existing_sku` (ya existe en la empresa), `invalid_decimal`, `negative_decimal`,
+`decimal_too_large`, `too_many_decimals`, `invalid_uuid`, `supplier_not_found`,
+`supplier_inactive` y `csv_injection` (celdas que empiezan con `=`, `+`, `-` o `@`).
+
+### Movimientos manuales: `POST /api/v1/inventory/movements`
+
+Requiere rol manager o superior. Cada movimiento actualiza el stock y las alertas
+en la misma transacción, y el stock nunca queda negativo (400).
+
+| Suman | Restan |
+|---|---|
+| `entrada_compra`, `entrada_manual`, `ajuste_positivo`, `devolucion_cliente` | `salida_manual`, `ajuste_negativo`, `devolucion_proveedor` |
+
+- `salida_venta` solo la registran las ventas, y `referencia_tipo` y
+  `referencia_id` solo los fijan las ventas y sus anulaciones. Enviarlos en un
+  movimiento manual responde 400, para que un movimiento manual no pueda pasar por
+  una venta.
+- Los ajustes (`ajuste_positivo`, `ajuste_negativo`) exigen `motivo`; sin él la
+  respuesta es 422. En los demás tipos el motivo es opcional.
+- Un producto inactivo no se vende ni acepta movimientos manuales (400), salvo
+  ajustes: así se corrige o se da de baja el stock que le quedó. Las anulaciones
+  de ventas también le devuelven su stock.
 
 ### Reportes — `/api/v1/reports`
 
@@ -305,6 +383,27 @@ Al registrar una venta mediante `POST /api/v1/commercial/sales`:
 4. **Total final**: `total = subtotal - descuento + impuesto`.
 5. **Redondeo monetario**: Se utiliza redondeo aritmético simétrico (`ROUND_HALF_UP`) con precisión a centavos (`0.01`).
 6. **Almacenamiento del desglose**: La venta almacena `subtotal`, `descuento`, `impuesto`, `tasa_impuesto`, `es_exenta` y `total` para auditoría e histórico inmutable.
+
+#### Anulación de ventas
+
+`POST /api/v1/commercial/sales/{sale_id}/void` con `{"motivo": "..."}` anula una
+venta completada. Requiere rol manager o superior.
+
+- `motivo` es obligatorio, de 1 a 200 caracteres sin contar los espacios al inicio
+  y al final.
+- La venta no se borra: pasa a `estado = anulada` y guarda `motivo_anulacion`,
+  `anulada_por` (el usuario) y `anulada_en`. Sus líneas, importes y movimientos
+  `salida_venta` quedan como estaban.
+- En la misma transacción, el stock de cada línea vuelve al producto con un
+  movimiento `devolucion_cliente` cuyo `referencia_tipo` es `anulacion_venta`,
+  cuyo `referencia_id` es la venta y cuyo `motivo` es el de la anulación. Las
+  alertas de stock se recalculan.
+- También se anulan ventas con productos que se desactivaron después: la anulación
+  corrige el historial y devuelve su stock.
+- Una venta ya anulada responde 400, también cuando dos anulaciones llegan a la vez:
+  solo una se aplica. Una venta inexistente o de otra empresa responde 404.
+- Las métricas, los reportes y el chat cuentan solo ventas completadas, así que una
+  venta anulada deja de sumar en ellos.
 
 ### Tareas
 

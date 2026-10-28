@@ -51,6 +51,9 @@ class Venta(Base):
     es_exenta = Column(Boolean, nullable=False, server_default=text("false"))
     total = Column(Numeric(10, 2), nullable=False, server_default=text("0"))
     estado = Column(String(20), nullable=False, server_default=text("'borrador'"))
+    motivo_anulacion = Column(String(200), nullable=True)
+    anulada_por = Column(UUID(as_uuid=True), ForeignKey("global.users.id"), nullable=True)
+    anulada_en = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=text("now()"))
     updated_at = Column(DateTime, nullable=False, server_default=text("now()"))
 

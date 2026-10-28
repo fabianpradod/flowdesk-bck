@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.services.audit import record_event
@@ -5,6 +6,7 @@ from app.models.users import User
 from app.models.roles import Role
 from app.schemas.users import UserUpdate, UserStatusUpdate
 from app.utils.exceptions import AppError
+from app.utils.logger import logger
 
 
 def get_users(db: Session, current_user) -> list[User]:
@@ -24,20 +26,28 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
     if current_user.role.name != "superadmin" and user.company_id != current_user.company_id:
         raise AppError(404, "User not found")
 
+    # Every rule is checked before the first field changes, so a refused request
+    # never leaves part of its fields applied.
+    changes = {}
     if data.username is not None and data.username != user.username:
-        # Usernames are unique across companies; without this check the unique
-        # index caught the duplicate and the request answered 500.
-        if db.query(User).filter(User.username == data.username).first():
-            raise AppError(400, "Username already registered")
-        user.username = data.username
-    if data.role_id is not None:
+        _assert_username_available(db, data.username)
+        changes["username"] = data.username
+    if data.role_id is not None and data.role_id != user.role_id:
+        if user.id == current_user.id:
+            raise AppError(400, "Cannot change your own role")
         role = db.query(Role).filter(Role.id == data.role_id).first()
         if not role:
             raise AppError(404, "Role not found")
         if role.name == "superadmin":
             raise AppError(403, "Cannot assign superadmin role")
-        user.role_id = data.role_id
+        changes["role_id"] = data.role_id
+    if data.is_active is not None and data.is_active != user.is_active:
+        if user.id == current_user.id:
+            raise AppError(400, "Cannot change your own status")
+        changes["is_active"] = data.is_active
 
+    for field, value in changes.items():
+        setattr(user, field, value)
     _commit_user_change(db, current_user, user, "user.role_changed" if data.role_id is not None else "user.updated")
     db.refresh(user)
     return user
@@ -75,10 +85,26 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
     _commit_user_change(db, current_user, user, "user.deactivated")
 
 
+def _assert_username_available(db: Session, username: str) -> None:
+    # Usernames are unique across companies; without this check the unique
+    # index caught the duplicate and the request answered 500.
+    if db.query(User).filter(User.username == username).first():
+        raise AppError(400, "Username already registered")
+
+
 def _commit_user_change(db, actor, user, action):
+    user_id = user.id
     try:
-        record_event(db, actor, action, 'user', user.id, schema_name=user.company.schema_name)
+        record_event(db, actor, action, 'user', user_id, schema_name=user.company.schema_name)
         db.commit()
+    except IntegrityError:
+        # Another request took the username between the check and the commit.
+        db.rollback()
+        raise AppError(400, "Username already registered")
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to update user %s", user_id)
+        raise AppError(500, "Failed to update user")
     except Exception as exc:
         db.rollback()
         raise AppError(500, 'User update failed') from exc

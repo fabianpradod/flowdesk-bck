@@ -1,14 +1,16 @@
 from uuid import UUID
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator, model_validator
 from app.core.security import validate_password
+from app.schemas.base import StrippedModel
 
 class UserBase(BaseModel):
     username: str
     email: EmailStr
 
-class UserCreate(UserBase):
+class UserCreate(StrippedModel, UserBase):
+    username: str = Field(min_length=1, max_length=50)
     role_id: int
     company_id: Optional[UUID] = None  # only required when superadmin calls
     # no password, no company_id
@@ -93,9 +95,10 @@ class EmailRequest(BaseModel):
         }
     )
 
-class UserUpdate(BaseModel):
-    username: Optional[str] = None
+class UserUpdate(StrippedModel):
+    username: Optional[str] = Field(default=None, min_length=1, max_length=50)
     role_id: Optional[int] = None
+    is_active: Optional[bool] = None
 
 class UserStatusUpdate(BaseModel):
     is_active: bool

@@ -2,7 +2,9 @@ import re
 from uuid import UUID
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import NoInspectionAvailable
+from sqlalchemy.schema import CreateIndex
 from app.models.tenant.registry import build_tenant_metadata, get_tenant_table_names
+from app.utils.logger import logger
 
 
 SCHEMA_NAME_RE = re.compile(r"^tenant_[a-f0-9]{32}$")
@@ -27,6 +29,7 @@ def bootstrap_tenant_schema(connection, schema_name: str) -> None:
     ]
     metadata.create_all(bind=connection, tables=tenant_tables)
     _migrate_existing_tenant_schema(connection, schema_name)
+    _ensure_partial_unique_indexes(connection, schema_name, tenant_tables)
     # create_all skips indexes on already-existing tables; migrate those explicitly.
     if hasattr(connection, 'dialect'):
         for table in tenant_tables:
@@ -34,6 +37,54 @@ def bootstrap_tenant_schema(connection, schema_name: str) -> None:
                 continue
             for index in table.indexes:
                 index.create(bind=connection, checkfirst=True)
+
+
+def _ensure_partial_unique_indexes(connection, schema_name: str, tables) -> None:
+    """Give tenants whose tables predate a partial unique index the declared version.
+
+    create_all builds indexes only together with a new table, so an older tenant has
+    no index, or the one declared before the current condition, and the database
+    stops guarding the rule. A tenant that already holds duplicates is skipped with
+    a warning instead of failing the startup.
+    """
+    if connection.dialect.name != "postgresql":
+        return
+    for table in tables:
+        for index in table.indexes:
+            where = index.dialect_options["postgresql"]["where"]
+            if not index.unique or where is None:
+                continue
+            definition = connection.execute(
+                text("SELECT indexdef FROM pg_indexes WHERE schemaname = :schema AND indexname = :name"),
+                {"schema": schema_name, "name": index.name},
+            ).scalar()
+            if definition is not None and _same_condition(definition, str(where)):
+                continue
+            expressions = ", ".join(str(expression) for expression in index.expressions)
+            duplicate = connection.execute(
+                text(
+                    f'SELECT 1 FROM "{schema_name}"."{table.name}" WHERE {where} '
+                    f"GROUP BY {expressions} HAVING count(*) > 1 LIMIT 1"
+                )
+            ).first()
+            if duplicate is not None:
+                logger.warning(
+                    "Tenant %s has duplicate rows for %s; the unique index was not created",
+                    schema_name,
+                    index.name,
+                )
+                continue
+            if definition is not None:
+                connection.execute(text(f'DROP INDEX "{schema_name}"."{index.name}"'))
+            connection.execute(CreateIndex(index))
+
+
+def _same_condition(definition: str, where: str) -> bool:
+    # Postgres stores the condition with its own parentheses and spacing.
+    if " WHERE " not in definition:
+        return False
+    normalize = lambda value: re.sub(r"[\s()]", "", value).lower()
+    return normalize(definition.split(" WHERE ", 1)[1]) == normalize(where)
 
 def _migrate_existing_tenant_schema(connection, schema_name: str) -> None:
     try:
@@ -45,6 +96,9 @@ def _migrate_existing_tenant_schema(connection, schema_name: str) -> None:
         "venta": {
             "tasa_impuesto": "NUMERIC(5, 2) NOT NULL DEFAULT 0",
             "es_exenta": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "motivo_anulacion": "VARCHAR(200) NULL",
+            "anulada_por": 'UUID NULL REFERENCES "global".users (id)',
+            "anulada_en": "TIMESTAMP NULL",
         },
         "configuracion_tributaria": {
             "perfil_tributario": "JSON NULL",

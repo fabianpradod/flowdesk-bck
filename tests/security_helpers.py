@@ -89,6 +89,7 @@ ROUTE_POLICY = {
     ("DELETE", "/api/v1/commercial/clients/{client_id}"): ADMIN,
     ("GET", "/api/v1/commercial/clients/{client_id}/purchases"): AUTHENTICATED,
     ("POST", "/api/v1/commercial/sales"): MANAGER,
+    ("POST", "/api/v1/commercial/sales/{sale_id}/void"): MANAGER,
     ("GET", "/api/v1/commercial/sales/{sale_id}"): AUTHENTICATED,
     ("GET", "/api/v1/commercial/tax-configuration"): AUTHENTICATED,
     ("PUT", "/api/v1/commercial/tax-configuration"): ADMIN,
@@ -208,6 +209,9 @@ class FakeResult:
         self.rowcount = 0
 
     def mappings(self):
+        return self
+
+    def scalars(self):
         return self
 
     def first(self):
@@ -435,6 +439,7 @@ def request_kwargs(key, ref=None) -> dict:
         ("POST", "/api/v1/commercial/sales"): {
             "cliente_id": ref, "items": [{"producto_id": ref, "cantidad": "1"}],
         },
+        ("POST", "/api/v1/commercial/sales/{sale_id}/void"): {"motivo": "Error de digitacion"},
         ("POST", "/api/v1/tasks"): {"titulo": "Tarea"},
         ("PUT", "/api/v1/tasks/{task_id}"): {"titulo": "Tarea 2"},
         ("PATCH", "/api/v1/tasks/{task_id}/status"): {"estado": "completada"},
