@@ -1,6 +1,7 @@
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.dialects.postgresql import UUID
 
+from app.models.tenant.audit import AuditEvent
 from app.models.tenant.chat import ChatConversation, ChatMessage
 from app.models.tenant.base import Base, TENANT_SCHEMA
 from app.models.tenant.commercial import Cliente, ConfiguracionTributaria, DetalleVenta, Venta
@@ -10,6 +11,7 @@ from app.models.tenant.fiscal import FiscalDocument, FiscalDocumentLine, ImportB
 
 
 TENANT_MODELS = (
+    AuditEvent,
     Proveedor,
     Producto,
     ProveedorProducto,

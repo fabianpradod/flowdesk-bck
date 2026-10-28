@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Index, Column, DateTime, ForeignKey, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.models.tenant.base import Base, TENANT_SCHEMA
@@ -46,6 +46,8 @@ class MovimientoInventario(Base):
     __tablename__ = "movimiento_inventario"
     __table_args__ = (
         CheckConstraint("cantidad > 0", name="ck_movimiento_inventario_cantidad_positive"),
+        Index('ix_movimiento_fecha_id', 'fecha', 'id'),
+        Index('ix_movimiento_producto_fecha_id', 'producto_id', 'fecha', 'id'),
         {"schema": TENANT_SCHEMA},
     )
 

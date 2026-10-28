@@ -58,6 +58,7 @@ ROUTE_POLICY = {
     ("PATCH", "/api/v1/users/{user_id}/status"): ADMIN,
     ("DELETE", "/api/v1/users/{user_id}"): ADMIN,
     ("GET", "/api/v1/roles"): ADMIN,
+    ("GET", "/api/v1/audit/events"): ADMIN,
     # inventory
     ("GET", "/api/v1/inventory/suppliers"): AUTHENTICATED,
     ("POST", "/api/v1/inventory/suppliers"): MANAGER,
@@ -70,6 +71,7 @@ ROUTE_POLICY = {
     ("PATCH", "/api/v1/inventory/products/{product_id}/status"): ADMIN,
     ("POST", "/api/v1/inventory/products/import"): MANAGER,
     ("GET", "/api/v1/inventory/movements"): AUTHENTICATED,
+    ("GET", "/api/v1/inventory/movements/page"): AUTHENTICATED,
     ("POST", "/api/v1/inventory/movements"): MANAGER,
     ("GET", "/api/v1/inventory/alerts"): AUTHENTICATED,
     ("GET", "/api/v1/inventory/analytics/monthly"): MANAGER,

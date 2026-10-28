@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from uuid import UUID
+from app.services.audit import record_event
 from app.models.users import User
 from app.models.roles import Role
 from app.schemas.users import UserUpdate, UserStatusUpdate
@@ -37,7 +38,7 @@ def update_user(db: Session, user_id: UUID, data: UserUpdate, current_user) -> U
             raise AppError(403, "Cannot assign superadmin role")
         user.role_id = data.role_id
 
-    db.commit()
+    _commit_user_change(db, current_user, user, "user.role_changed" if data.role_id is not None else "user.updated")
     db.refresh(user)
     return user
 
@@ -54,7 +55,7 @@ def update_user_status(db: Session, user_id: UUID, data: UserStatusUpdate, curre
         raise AppError(404, "User not found")
 
     user.is_active = data.is_active
-    db.commit()
+    _commit_user_change(db, current_user, user, "user.status_changed")
     db.refresh(user)
     return user
 
@@ -71,4 +72,13 @@ def delete_user(db: Session, user_id: UUID, current_user) -> None:
         raise AppError(404, "User not found")
 
     user.is_active = False
-    db.commit()
+    _commit_user_change(db, current_user, user, "user.deactivated")
+
+
+def _commit_user_change(db, actor, user, action):
+    try:
+        record_event(db, actor, action, 'user', user.id, schema_name=user.company.schema_name)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise AppError(500, 'User update failed') from exc

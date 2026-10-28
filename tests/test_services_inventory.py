@@ -1,3 +1,5 @@
+from app.models.tenant.audit import AuditEvent
+from types import SimpleNamespace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -108,6 +110,8 @@ def inventory_db(monkeypatch):
         Column("resuelta_en", DateTime),
     )
 
+    audit_table = AuditEvent.__table__.to_metadata(metadata, schema=None)
+    monkeypatch.setattr('app.services.audit.get_tenant_tables', lambda _schema: {'audit_event': audit_table})
     metadata.create_all(engine)
 
     SessionLocal = sessionmaker(
@@ -135,7 +139,7 @@ def inventory_db(monkeypatch):
     current_user = type(
         "TestUser",
         (),
-        {"id": uuid4()},
+        {"id": uuid4(), "company_id": uuid4(), "company": SimpleNamespace(is_active=True, schema_name="tenant_" + "a" * 32)},
     )()
 
     yield db, tables, current_user
@@ -1519,6 +1523,12 @@ def test_create_inventory_movement_inbound(inventory_db):
     assert result["cantidad"] == Decimal("5")
     assert result["stock_anterior"] == Decimal("10")
     assert result["stock_resultante"] == Decimal("15")
+    from app.services.audit import get_tenant_tables
+    audit_table = get_tenant_tables(user.company.schema_name)['audit_event']
+    event = db.execute(select(audit_table)).mappings().one()
+    assert event['action'] == 'movement.created'
+    assert event['actor_id'] == user.id
+    assert str(event['entity_id']) == str(result['id'])
 
 def test_create_inventory_movement_outbound(inventory_db):
     db, tables, user = inventory_db
@@ -2849,3 +2859,17 @@ def test_read_xlsx_missing_sheet():
         )
 
     assert exc.value.code == "invalid_format"
+
+def test_audit_failure_rolls_back_the_real_movement_service(inventory_db, monkeypatch):
+    db, tables, user = inventory_db
+    product_id = _insert_product(db, tables, stock=Decimal('10'))
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError('audit unavailable')
+    monkeypatch.setattr(inventory_service, 'record_event', fail_audit)
+    with pytest.raises(AppError, match='Inventory movement failed'):
+        inventory_service.create_inventory_movement(
+            InventoryMovementCreate(producto_id=product_id, tipo_movimiento='entrada_manual', cantidad=5),
+            user, db,
+        )
+    assert db.execute(select(tables['producto'].c.stock_actual)).scalar_one() == Decimal('10')
+    assert db.execute(select(tables['movimiento_inventario'])).all() == []

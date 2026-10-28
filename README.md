@@ -399,3 +399,27 @@ Los errores de validación HTTP mantienen `message`, `code` y `errors`; cada err
 incluye `type`, `loc` y `msg`. No se devuelven objetos de excepción ni la entrada
 original. Los validadores de preguntas vacías y filtros incompatibles siguen
 activos y responden 422.
+
+## Sprint 10: auditoría y consultas de movimientos paginadas
+
+`GET /api/v1/audit/events` permite a administradores consultar acciones críticas
+solo de su empresa activa. Devuelve `{items, next_cursor}` y acepta `limit` (1–100),
+`cursor`, `action` y `actor_id`. Los eventos se escriben dentro de la transacción
+del cambio; no contienen contraseñas, tokens ni cuerpos completos. El catálogo y
+los límites de cobertura están en [auditoría del Sprint 10](docs/security/sprint10/README.md).
+
+`GET /api/v1/inventory/movements/page` devuelve `{items, next_cursor}` con `limit`
+(1–500), filtro `product_id` y cursor por fecha/ID. La ruta anterior `/movements`
+conserva su lista completa. El frontend debe adoptar la ruta nueva para reducir
+el volumen de respuesta. Ver [mediciones y reproducción](docs/performance/sprint10/README.md).
+
+El bootstrap crea la tabla `audit_event` y los índices de paginación para tenants
+existentes. Planificar la migración antes de levantar réplicas: crear índices
+puede bloquear escrituras en tablas grandes. No se activa multi-worker por
+defecto porque el chat y el rate limit de recuperación siguen usando memoria por
+proceso. El tamaño máximo del pool se multiplica por la cantidad de workers.
+
+El workflow `Dependency audit` revisa dependencias de ejecución/desarrollo con
+pip-audit y conserva JSON aun si falla. La primera auditoría detectó vulnerabilidades
+existentes; el detalle y la remediación pendiente están documentados. No se
+suprimen alertas para conseguir un check verde ni se modifican reglas de merge.

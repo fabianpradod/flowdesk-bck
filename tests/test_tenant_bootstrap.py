@@ -76,6 +76,7 @@ def test_build_tenant_metadata_contains_expected_tables():
     table_names = get_tenant_table_names()
 
     expected_table_names = {
+        "audit_event",
         "proveedor",
         "producto",
         "proveedor_producto",

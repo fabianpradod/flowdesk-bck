@@ -251,3 +251,8 @@ class InventoryHistoryRow(BaseModel):
     cantidad: Decimal
     stock_resultante: Decimal
     motivo: str | None
+
+
+class InventoryMovementPage(BaseModel):
+    items: list[InventoryMovementResponse]
+    next_cursor: str | None = None
